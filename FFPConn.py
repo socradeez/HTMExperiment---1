@@ -1,5 +1,7 @@
 import numpy as np
 
+import numpy as np
+
 class FFProximalConnection:
     """
     Represents a FeedForward Proximal Connection layer in a Hierarchical Temporal Memory (HTM) system.
@@ -9,27 +11,28 @@ class FFProximalConnection:
         syn_perm_inactive_dec (float): Decrement of synapse permanence for inactive connections.
     """
 
-    syn_perm_active_inc = 0.03
-    syn_perm_inactive_dec = 0.005
+    syn_perm_active_inc = 0.1
+    syn_perm_inactive_dec = 0.03
 
-    def __init__(self, input_size, num_columns=500, connected_perm=0.5, initial_perm_range=0.1, sparsity=0.1, boost_strength=1):
+    def __init__(self, neuron_layer, num_columns=500, connected_perm=0.5, initial_perm_range=0.2, sparsity=0.1, boost_strength=1):
         """
         Initializes the FFProximalConnection layer.
 
         Parameters:
-            input_size (int): Size of the input vector.
+            neuron_layer (NeuronLayer): Neuron layer object to connect to.
             num_columns (int): Number of columns in the HTM layer.
             connected_perm (float): Threshold for a synapse to be considered connected.
             initial_perm_range (float): Range for initializing the synapse permanences.
             sparsity (float): Target sparsity of the active columns.
             boost_strength (float): Strength of boosting for underutilized columns.
         """
-        self.input_size = input_size
+        self.neuron_layer = neuron_layer
+        self.input_size = neuron_layer.size
         self.num_columns = num_columns
         self.connected_perm = connected_perm
         self.initial_perm_range = initial_perm_range
-        self.sparsity = 100 * sparsity
-        self.stimulus_threshold = 2
+        self.sparsity = sparsity
+        self.stimulus_threshold = 5
         self.active_duty_cycle = np.zeros(self.num_columns)
         self.overlap_duty_cycle = np.zeros(self.num_columns)
         self.boosting_values = np.ones(self.num_columns)
@@ -48,47 +51,69 @@ class FFProximalConnection:
         perms = np.random.uniform(self.connected_perm - self.initial_perm_range, self.connected_perm + self.initial_perm_range, (self.num_columns, self.input_size))
         return perms
 
-    def compute_overlap(self, input_vector):
+    def compute_overlap(self, active_indices):
         """
-        Computes the overlap of the input vector with each column.
+        Computes the overlap of the active neurons with each column.
 
         Parameters:
-            input_vector (numpy.ndarray): The binary input vector.
+            active_indices (list): Indices of active neurons in the neuron layer.
 
         Returns:
             numpy.ndarray: Array of overlap scores for each column.
         """
+        input_vector = np.zeros(self.input_size)
+        input_vector[active_indices] = 1
         overlaps = np.dot(self.connected_synapses.astype(float), input_vector)
         overlaps *= self.boosting_values
         return overlaps
 
-    def get_active_columns(self):
+    def get_active_columns(self, overlaps):
         """
         Determines the active columns based on the overlap values and sparsity constraint.
+
+        Parameters:
+            overlaps (numpy.ndarray): Overlap scores for each column.
 
         Returns:
             list: Indices of the active columns.
         """
         active_columns = []
-        k = int(self.num_columns // self.sparsity)
-        kth = np.partition(self.overlaps, -k)[-k]
-        for column in range(self.num_columns):
-            if self.overlaps[column] >= kth:
-                active_columns.append(column)
-        return active_columns
+        k = int(self.num_columns * self.sparsity)  # Desired number of active columns
 
-    def learn(self, input_vector):
+        # Sort overlaps and find the kth largest value
+        sorted_overlaps = np.sort(overlaps)[::-1]
+        kth_overlap = sorted_overlaps[max(0, k-1)]
+
+        # Select all columns with overlap greater than the kth_overlap
+        return np.where(overlaps >= kth_overlap)[0].tolist()
+
+    def learn(self, active_indices, active_columns):
         """
-        Updates the permanences based on the current input vector.
+        Updates the permanences based on the current input vector, focusing only on active columns.
 
         Parameters:
-            input_vector (numpy.ndarray): The current binary input vector.
+            active_indices (list): Indices of active neurons in the neuron layer.
+            active_columns (list): Indices of active columns.
         """
-        decrement_update_matrix = FFProximalConnection.syn_perm_inactive_dec * (1 - input_vector)
-        increment_update_matrix = FFProximalConnection.syn_perm_active_inc * input_vector
-        self.permanences -= decrement_update_matrix.reshape(1, -1)
-        self.permanences += (increment_update_matrix.reshape(1, -1) * self.connected_synapses)
-        self.permanences = np.clip(self.permanences, 0, 1)  # Ensuring permanences stay within bounds
+        input_vector = np.zeros(self.input_size)
+        input_vector[active_indices] = 1
+
+        # Convert active columns list to a boolean mask
+        active_column_mask = np.zeros(self.num_columns, dtype=bool)
+        active_column_mask[active_columns] = True
+
+        # Create a mask for active inputs
+        active_input_mask = input_vector.astype(bool)
+
+        # Decrement all synapses of active columns
+        self.permanences[active_column_mask, :] -= FFProximalConnection.syn_perm_inactive_dec
+
+        # Increment synapses that connect active columns to active inputs
+        increment_mask = np.outer(active_column_mask, active_input_mask)
+        self.permanences += increment_mask * (FFProximalConnection.syn_perm_active_inc + FFProximalConnection.syn_perm_inactive_dec)
+
+        # Ensuring permanences stay within bounds
+        self.permanences = np.clip(self.permanences, 0, 1)
 
     def update_active_duty_cycle(self, col_idx, isactive):
         """
@@ -139,22 +164,19 @@ class FFProximalConnection:
         for c in range(self.num_columns):
             self.boosting_values[c] = self.boost_function(self.active_duty_cycle[c])
 
-    def run_step(self, input_vector):
+    def run_step(self, active_indices):
         """
         Runs a simulation step.
 
         Parameters:
-            input_vector (numpy.ndarray): The current binary input vector.
+            active_indices (list): Indices of active neurons in the neuron layer.
 
         Returns:
             list: Indices of the active columns after the step.
         """
-        self.overlaps = self.compute_overlap(input_vector)
-        self.active_columns = self.get_active_columns()
-        self.learn(input_vector)
-        for column in range(self.num_columns):
-            is_active = column in self.active_columns
-            self.update_active_duty_cycle(column, is_active)
-            self.update_overlap_duty_cycle_and_adjust_perm(column, self.overlaps[column])
+        overlaps = self.compute_overlap(active_indices)
+        active_columns = self.get_active_columns(overlaps)
+        self.learn(active_indices, active_columns)
+        # Update duty cycles and any other stateful properties here
         self.step += 1
-        return self.active_columns
+        return active_columns
