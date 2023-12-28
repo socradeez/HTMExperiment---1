@@ -1,23 +1,14 @@
-from FFPConnCP import FFProximalConnection
-from BDDConnCP import BDDendriticConnection
-from LateralConnCP import LateralConnection
+from FFPConn import FFProximalConnection
+from BDDConn import BDDendriticConnection
+from LateralConn import LateralConnection
 import cupy as cp
 from cupy import sparse
 
 
 class NeuronLayer:
-    """
-    Represents a generic neuron layer in a Hierarchical Temporal Memory (HTM) system. 
-    This is the base class to represent a set of neurons, and will be subclassed for specific neuron layers.
-    """
 
     def __init__(self, macro_column, num_columns, neurons_per_column):
-        """
-        Initializes the NeuronLayer.
 
-        Parameters:
-            size (int): The number of neurons in this layer.
-        """
         self.macro_column = macro_column
         self.num_columns = num_columns
         self.neurons_per_column = neurons_per_column
@@ -26,47 +17,27 @@ class NeuronLayer:
         self.previous_active_neurons = sparse.csr_matrix(self.shape, dtype=bool)
 
     def get_active_neurons(self):
-        """
-        Returns the sparse matrix of active neurons.
 
-        Returns:
-            cupy.sparse: matrix of neurons with active neurons represented by active bool.
-        """
         return self.active_neurons
     
     def set_active_neurons(self, array):
         self.active_neurons = array
 
 class L4Layer(NeuronLayer):
-    def __init__(self, macro_column, num_columns, neurons_per_column, ffp_input_layer):
-        """
-        Initializes the L4 layer. This layer contains minicolumns as groupings of neurons which are fed from a shared proximal dendritic segment. 
-        Any number of context layer connections can be added. 
 
-        Parameters:
-            size (int): The number of columns in the L4 layer.
-            ffp_input_layer (NeuronLayer): The input layer for the FFP layer.
-            neurons_per_column (int): The number of neurons per column in the L4 layer.
-        """
+    def __init__(self, macro_column, num_columns, neurons_per_column, ffp_input_layer, ffp_stim_thresh):
         super().__init__(macro_column, num_columns, neurons_per_column)
-        self.ffp_layer = FFProximalConnection(self, ffp_input_layer, stim_threshold=5)
+        self.ffp_layer = FFProximalConnection(self, ffp_input_layer, stim_threshold=ffp_stim_thresh)
         self.bdd_layers = []
 
-    def add_context_connection(self, bdd_input_layer, concurrent=False):
-        """
-        Adds a BDD layer for context.
-        This connection type can be temporal (in the context of the previous input), or concurrent (in the context of the current input).
-        They can connect to any other neuron layer, though only a temporal delayed connection is available to the parent layer due to recursion.
-
-        Parameters:
-            bdd_input_layer (NeuronLayer): The input layer for the BDD layer.
-        """
-        bdd_layer = BDDendriticConnection(self, bdd_input_layer, concurrent)
+    def add_context_connection(self, bdd_input_layer, bdd_threshold, concurrent):
+        bdd_layer = BDDendriticConnection(self, bdd_input_layer, concurrent=concurrent, activation_threshold=bdd_threshold)
         self.bdd_layers.append(bdd_layer)
 
-    def run_timestep(self, inhibition=0.02):
+    def run_timestep(self, learn, inhibition=0.02):
         self.active_columns = self.ffp_layer.get_activity(inhibition, boosting=True)
-        self.ffp_layer.learn()
+        if learn:
+            self.ffp_layer.learn()
 
         predicted_indices = cp.empty((0, 2), dtype=int)
         for bdd_layer in self.bdd_layers:
@@ -104,7 +75,8 @@ class L4Layer(NeuronLayer):
         self.active_neurons = sparse.csr_matrix(active_neurons)
 
         # Direct learning for BDD and FFP layers
-        self.learn()
+        if learn:
+            self.learn()
 
         self.previous_active_neurons = self.active_neurons
 
@@ -120,75 +92,71 @@ class L4Layer(NeuronLayer):
 
 class L2Layer(NeuronLayer):
 
-    def __init__(self, macro_column, num_columns, neurons_per_column, ffp_input_layer):
+    def __init__(self, macro_column, num_columns, neurons_per_column, ffp_input_layer, ffp_stim_thresh, min_active_neurons, max_active_neurons):
 
         super().__init__(macro_column, num_columns, neurons_per_column)
-        self.ffp_layer = FFProximalConnection(self, ffp_input_layer, stim_threshold=5)
+        self.ffp_layer = FFProximalConnection(self, ffp_input_layer, stim_threshold=ffp_stim_thresh)
         self.bdd_layers = []
         self.lc_layers = []
-        self.lc_threshold = int(0.02 * self.num_columns * self.neurons_per_column)
+        self.min_active_neurons = min_active_neurons
+        self.max_active_neurons = max_active_neurons
 
-    def add_context_connection(self, bdd_input_layer, concurrent=False):
+    def add_context_connection(self, bdd_input_layer, bdd_threshold):
 
-        bdd_layer = BDDendriticConnection(self, bdd_input_layer, concurrent)
+        bdd_layer = BDDendriticConnection(self, bdd_input_layer, concurrent=False, activation_threshold=bdd_threshold)
         self.bdd_layers.append(bdd_layer)
 
-    def add_lateral_connection(self, target_column):
+    def add_lateral_connection(self, target_column, lc_threshold):
 
-        lc_layer = LateralConnection(self, target_column.layer2, concurrent=False)
+        lc_layer = LateralConnection(self, target_column.L2, concurrent=False, activation_threshold=lc_threshold)
         self.lc_layers.append(lc_layer)
 
-    def run_timestep(self):
+    def run_timestep(self, learn):
         self.ff_activity = self.ffp_layer.get_activity(inhibition=1)
 
+
+        active_count = cp.sum(self.ff_activity)
+        if active_count < self.min_active_neurons:
+            neurons_to_activate = self.min_active_neurons - active_count
+
+            inactive_indices = cp.where(self.ff_activity.flatten() == 0)
+
+            selected_indices = cp.random.choice(inactive_indices, size=neurons_to_activate, replace=False)
+
+            # Activate the selected neurons
+            self.ff_activity.ravel()[selected_indices] = 1
+
+            self.ffp_layer.activity = self.ff_activity
+        
+        self.ff_activity = self.ff_activity.reshape((self.num_columns, self.neurons_per_column))
+
         self.active_segments_by_neuron = cp.zeros((self.num_columns, self.neurons_per_column), dtype=int)
+
         for connection in self.lc_layers:
             self.active_segments_by_neuron += connection.get_active_segments_by_cell()
 
-        # Flatten the array for partitioning
-        flat_segments = self.active_segments_by_neuron.ravel()
-        # Check if the number of non-zero elements is less than lc_threshold
-        if cp.count_nonzero(flat_segments) < self.lc_threshold:
-            s = 0
-            self.supported_neurons_mask = cp.ones((self.num_columns, self.neurons_per_column))
+        supported_neurons_mask = cp.clip(self.active_segments_by_neuron, 0, 1)
 
-            # Identify active columns with zero active segments
-            columns_with_zero_segments = cp.sum(self.active_segments_by_neuron, axis=1) == 0
-            candidate_columns = cp.where(cp.logical_and(self.ff_activity, columns_with_zero_segments))[0]
+        if cp.count_nonzero(supported_neurons_mask) < self.min_active_neurons:
+            self.active_neurons = self.ff_activity
+            neurons_to_activate = self.min_active_neurons - int(cp.count_nonzero(supported_neurons_mask))
 
-            # Number of segments to create
-            segments_to_create = int(self.lc_threshold - cp.count_nonzero(flat_segments))
+            inactive_indices = cp.where(supported_neurons_mask.flatten() == 0)[0].astype(int)
+            selected_indices = cp.random.choice(inactive_indices, size=neurons_to_activate, replace=False)
 
-            if candidate_columns.size < segments_to_create:
-                candidate_columns = cp.arange(self.num_columns)
-            # Randomly select columns for new segment creation
-            selected_columns = cp.random.choice(candidate_columns, size=segments_to_create, replace=False)
-
-            # Create new segments for the selected columns
-            for col_idx in selected_columns:
-                for connection in self.lc_layers:
-                    connection.create_distal_segment(col_idx)
-
-        else:
-            # Find the lc_thresholdth largest element
-            threshold_index = len(flat_segments) - self.lc_threshold  # Adjust for largest
-            # Negate, partition, and negate again
+            for index in selected_indices:
+                for layer in self.lc_layers:
+                    layer.create_distal_segment(index)
             
-            partitioned = cp.partition(flat_segments, threshold_index)
-            s = partitioned[threshold_index]
-            self.supported_neurons_mask = self.active_segments_by_neuron >= s
-
-        self.ff_activity = self.ff_activity.reshape(self.num_columns, self.neurons_per_column)
-
-        self.active_neurons = cp.logical_and(self.supported_neurons_mask, self.ff_activity)
+        else:
+            support_threshold = cp.sort(self.active_segments_by_neuron.ravel())[-self.min_active_neurons]
+            supported_neurons = self.active_segments_by_neuron > support_threshold
+            self.active_neurons = cp.logical_and(self.ff_activity, supported_neurons)
         self.active_neurons = sparse.csr_matrix(self.active_neurons)
 
-        if self.active_neurons.count_nonzero() == 0:
-            print('ffactivity = ', self.ff_activity)
-            print('supported mask = ', self.supported_neurons_mask)
-
-        self.learn()
-
+        if self.active_neurons.count_nonzero() < self.max_active_neurons and learn:
+            self.learn()
+        
         self.previous_active_neurons = self.active_neurons
 
     def learn(self):
@@ -196,7 +164,7 @@ class L2Layer(NeuronLayer):
         self.ffp_layer.learn()
         self.ffp_layer.step += 1
 
-        # Learning in BDD layers using stored segment information
+        # Learning in BDD and LC layers
         for bdd_layer in self.bdd_layers:
             bdd_layer.learn()
         for lc_layer in self.lc_layers:
