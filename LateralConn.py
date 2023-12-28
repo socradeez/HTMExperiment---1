@@ -2,7 +2,7 @@ import cupy as cp
 from cupy import sparse
 import random
 
-class BDDendriticConnection:
+class LateralConnection:
     """
     Represents Basal Distal Dendritic Connections in a Hierarchical Temporal Memory (HTM) system.
     """
@@ -31,16 +31,31 @@ class BDDendriticConnection:
             return self.input_layer.previous_active_neurons
         else:
             return self.input_layer.active_neurons
-
-    def get_predicted_cells(self):
+        
+    def get_active_segments_by_cell(self):
         self.get_active_segments()
-        # Check if there are any active segments
-        if cp.any(self.active_segments_mask):
-            predicted_cells = self.segment_to_neuron_map[self.active_segments_mask]
-        else:
-            # If no active segments, return an empty array
-            predicted_cells = cp.empty((0, self.segment_to_neuron_map.shape[1]))
-        return predicted_cells
+        self.get_matching_segments()
+        # Extract active segment indices
+        active_segment_indices = self.active_segments_mask.nonzero()[0]
+        active_segments = self.segment_to_neuron_map[active_segment_indices]
+
+        if active_segments.size == 0:
+            return cp.zeros((self.parent_layer.num_columns, self.parent_layer.neurons_per_column), dtype=int)
+
+        # Calculate the total number of columns in the parent layer
+        total_columns = self.parent_layer.num_columns
+
+        # Convert 2D indices (row, col) into a unique 1D index
+        unique_indices = active_segments[:, 0] * total_columns + active_segments[:, 1]
+
+        # Count the occurrences of each unique index
+        counts = cp.bincount(unique_indices, minlength=self.parent_layer.num_columns * self.parent_layer.neurons_per_column)
+
+        # Reshape the counts to the shape of parent_layer.active_neurons
+        active_segments_count = counts.reshape(self.parent_layer.num_columns, self.parent_layer.neurons_per_column)
+
+        return active_segments_count
+
 
     def create_distal_segment(self, col_idx):
         # Number of neurons per column
@@ -66,7 +81,7 @@ class BDDendriticConnection:
         
         # Set the permanences for active synapses
         new_segment = initial_permanences * self.input_array.A
-        new_segment = new_segment.reshape(1, *new_segment.shape)
+        new_segment = initial_permanences.reshape(1, self.input_layer.num_columns, self.input_layer.neurons_per_column)
 
         # Add the new segment to the permanence matrix and update the mapping array
         self.permanences = cp.vstack((self.permanences, new_segment))

@@ -1,170 +1,35 @@
-import numpy as np
-
-import numpy as np
+import cupy as cp
+from cupy import sparse
 
 class FFProximalConnection:
-    """
-    Represents a FeedForward Proximal Connection layer in a Hierarchical Temporal Memory (HTM) system.
-
-    Attributes:
-        syn_perm_active_inc (float): Increment of synapse permanence for active connections.
-        syn_perm_inactive_dec (float): Decrement of synapse permanence for inactive connections.
-    """
 
     syn_perm_active_inc = 0.1
     syn_perm_inactive_dec = 0.03
 
-    def __init__(self, neuron_layer, num_columns=500, connected_perm=0.5, initial_perm_range=0.2, sparsity=0.1, boost_strength=1):
-        """
-        Initializes the FFProximalConnection layer.
+    def __init__(self, parent_layer, input_layer, connected_perm=0.5, initial_perm_range=0.2, boost_strength=1, stim_threshold=3):
 
-        Parameters:
-            neuron_layer (NeuronLayer): Neuron layer object to connect to.
-            num_columns (int): Number of columns in the HTM layer.
-            connected_perm (float): Threshold for a synapse to be considered connected.
-            initial_perm_range (float): Range for initializing the synapse permanences.
-            sparsity (float): Target sparsity of the active columns.
-            boost_strength (float): Strength of boosting for underutilized columns.
-        """
-        self.neuron_layer = neuron_layer
-        self.input_size = neuron_layer.size
-        self.num_columns = num_columns
+        self.parent_layer = parent_layer
+        self.input_layer = input_layer
+        self.input_columns = input_layer.num_columns
+        self.input_neurons_per_column = input_layer.neurons_per_column
+        self.num_dendrites = parent_layer.num_columns
         self.connected_perm = connected_perm
         self.initial_perm_range = initial_perm_range
-        self.sparsity = sparsity
-        self.stimulus_threshold = 5
-        self.active_duty_cycle = np.zeros(self.num_columns)
-        self.overlap_duty_cycle = np.zeros(self.num_columns)
-        self.boosting_values = np.ones(self.num_columns)
+        self.stimulus_threshold = stim_threshold
+        self.active_duty_cycle = cp.zeros((self.num_dendrites, ))
+        self.overlap_duty_cycle = cp.zeros((self.num_dendrites, ))
+        self.boosting_values = cp.ones((self.num_dendrites, ))
         self.boost_strength = boost_strength
         self.step = 1
         self.permanences = self._initialize_permanences()
-        self.connected_synapses = self.permanences >= self.connected_perm
+        self.get_connected_synapses()
 
     def _initialize_permanences(self):
-        """
-        Initializes the synapse permanences randomly within a specified range.
 
-        Returns:
-            numpy.ndarray: Array of synapse permanences.
-        """
-        perms = np.random.uniform(self.connected_perm - self.initial_perm_range, self.connected_perm + self.initial_perm_range, (self.num_columns, self.input_size))
+        perms = cp.random.uniform(self.connected_perm - self.initial_perm_range, self.connected_perm + self.initial_perm_range, (self.input_columns, self.input_neurons_per_column, self.num_dendrites))
         return perms
-
-    def compute_overlap(self, active_indices):
-        """
-        Computes the overlap of the active neurons with each column.
-
-        Parameters:
-            active_indices (list): Indices of active neurons in the neuron layer.
-
-        Returns:
-            numpy.ndarray: Array of overlap scores for each column.
-        """
-        input_vector = np.zeros(self.input_size)
-        input_vector[active_indices] = 1
-        overlaps = np.dot(self.connected_synapses.astype(float), input_vector)
-        overlaps *= self.boosting_values
-        return overlaps
-
-    def get_active_columns(self, overlaps):
-        """
-        Determines the active columns based on the overlap values and sparsity constraint.
-
-        Parameters:
-            overlaps (numpy.ndarray): Overlap scores for each column.
-
-        Returns:
-            list: Indices of the active columns.
-        """
-        active_columns = []
-        k = int(self.num_columns * self.sparsity)  # Desired number of active columns
-
-        # Sort overlaps and find the kth largest value
-        sorted_overlaps = np.sort(overlaps)[::-1]
-        kth_overlap = sorted_overlaps[max(0, k-1)]
-
-        # Select all columns with overlap greater than the kth_overlap
-        return np.where(overlaps >= kth_overlap)[0].tolist()
-
-    def learn(self, active_indices, active_columns):
-        """
-        Updates the permanences based on the current input vector, focusing only on active columns.
-
-        Parameters:
-            active_indices (list): Indices of active neurons in the neuron layer.
-            active_columns (list): Indices of active columns.
-        """
-        input_vector = np.zeros(self.input_size)
-        input_vector[active_indices] = 1
-
-        # Convert active columns list to a boolean mask
-        active_column_mask = np.zeros(self.num_columns, dtype=bool)
-        active_column_mask[active_columns] = True
-
-        # Create a mask for active inputs
-        active_input_mask = input_vector.astype(bool)
-
-        # Decrement all synapses of active columns
-        self.permanences[active_column_mask, :] -= FFProximalConnection.syn_perm_inactive_dec
-
-        # Increment synapses that connect active columns to active inputs
-        increment_mask = np.outer(active_column_mask, active_input_mask)
-        self.permanences += increment_mask * (FFProximalConnection.syn_perm_active_inc + FFProximalConnection.syn_perm_inactive_dec)
-
-        # Ensuring permanences stay within bounds
-        self.permanences = np.clip(self.permanences, 0, 1)
-
-    def update_active_duty_cycle(self, col_idx, isactive):
-        """
-        Updates the active duty cycle for a given column.
-
-        Parameters:
-            col_idx (int): The index of the column.
-            isactive (bool): Whether the column is active.
-        """
-        num_timesteps = min(500, self.step)
-        self.active_duty_cycle[col_idx] = (self.active_duty_cycle[col_idx] * (num_timesteps - 1) + isactive) / num_timesteps
-
-    def update_overlap_duty_cycle_and_adjust_perm(self, col_idx, current_overlap):
-        """
-        Updates the overlap duty cycle for a column and adjusts its permanences if necessary.
-
-        Parameters:
-            col_idx (int): The index of the column.
-            current_overlap (int): The current overlap value for the column.
-        """
-        min_duty_cycle_fraction = 0.01
-        num_timesteps = min(500, self.step)
-        self.overlap_duty_cycle[col_idx] = (self.overlap_duty_cycle[col_idx] * (num_timesteps - 1) + (current_overlap > self.stimulus_threshold)) / num_timesteps
-        max_duty_cycle = np.max(self.overlap_duty_cycle)
-        min_duty_cycle = min_duty_cycle_fraction * max_duty_cycle
-        if self.overlap_duty_cycle[col_idx] < min_duty_cycle:
-            increase_amount = 0.1 * self.connected_perm
-            self.permanences[col_idx] += increase_amount
-            self.permanences[col_idx] = np.clip(self.permanences[col_idx], 0, 1)
-
-    def boost_function(self, active_duty_cycle):
-        """
-        Boosting function for adjusting the active duty cycle.
-
-        Parameters:
-            active_duty_cycle (float): The active duty cycle of a column.
-
-        Returns:
-            float: The boosted value.
-        """
-        mean_neighbors_duty_cycle = np.mean(self.active_duty_cycle)
-        return np.exp(self.boost_strength * (mean_neighbors_duty_cycle - active_duty_cycle))
-
-    def update_boosting_values(self):
-        """
-        Updates the boosting values for all columns.
-        """
-        for c in range(self.num_columns):
-            self.boosting_values[c] = self.boost_function(self.active_duty_cycle[c])
-
-    def run_step(self, active_indices):
+    
+    def get_activity(self, inhibition=1, boosting=True):
         """
         Runs a simulation step.
 
@@ -174,9 +39,127 @@ class FFProximalConnection:
         Returns:
             list: Indices of the active columns after the step.
         """
-        overlaps = self.compute_overlap(active_indices)
-        active_columns = self.get_active_columns(overlaps)
-        self.learn(active_indices, active_columns)
-        # Update duty cycles and any other stateful properties here
-        self.step += 1
-        return active_columns
+        # Compute overlap scores for each column based on the current input
+        self.compute_overlaps(boosting)
+
+        # Determine the active columns based on the overlap scores and sparsity constraint
+        return self.compute_activity(inhibition)
+    
+    def get_connected_synapses(self):
+        # Generate a binary mask array representing the connected synapses (with perm value greater than or equal to self.connected_perm)
+        self.connected_synapses = self.permanences >= self.connected_perm
+        return self.connected_synapses
+
+    def compute_overlaps(self, boosting):
+        """
+        Computes overlaps using tensordot between a 3D and a 2D matrix.
+        """
+        # Use tensordot to compute overlaps
+        self.overlaps = cp.tensordot(self.input_layer.active_neurons.A.astype(int), self.connected_synapses, axes=([0, 1],[0, 1])).squeeze()
+
+        # Multiply overlaps by boost factors if boosting is turned on
+        if boosting:
+            self.overlaps * self.boosting_values
+        # Returns an array of shape=(self.num_dendrites,)
+        return self.overlaps
+
+    def compute_activity(self, inhibition):
+        if inhibition < 1:
+            k = int(self.num_dendrites * inhibition)  # Desired number of active columns
+
+            # Sort overlaps and find the kth largest value
+            sorted_overlaps = cp.sort(self.overlaps)[::-1]
+            kth_overlap = sorted_overlaps[max(0, k-1)]
+            candidates = self.overlaps >= kth_overlap
+
+            # Count the number of candidates
+            num_candidates = cp.sum(candidates)
+
+            if num_candidates > k:
+                # If more than k candidates, select k of them at random
+                candidate_indices = cp.where(candidates)[0]
+                chosen_indices = cp.random.choice(candidate_indices, size=k, replace=False)
+                self.activity = cp.zeros_like(self.overlaps, dtype=bool)
+                self.activity[chosen_indices] = True
+            else:
+                # If k or fewer candidates, activate all of them
+                self.activity = candidates
+
+        else:
+            self.activity = self.overlaps >= self.stimulus_threshold
+
+        return self.activity
+
+    def learn(self):
+        # Reshape self.activity to work with the 3D permanence array
+        active_dendrites = self.activity.reshape(1, 1, -1)
+
+        # Decrement all synapses of active dendrites
+        # This applies the decrement to the entire slice for each active dendrite
+        decrement_mask = active_dendrites * FFProximalConnection.syn_perm_inactive_dec
+        self.permanences -= decrement_mask
+
+
+        # Get active inputs reshaped to align with the 3D permanence array
+        active_inputs = self.input_layer.active_neurons.A.reshape(self.input_columns, self.input_neurons_per_column, 1)
+
+        # Increment synapses that connect active columns to active inputs
+        increment_mask = active_dendrites * active_inputs * (FFProximalConnection.syn_perm_active_inc + FFProximalConnection.syn_perm_inactive_dec)
+        self.permanences += increment_mask
+
+        # Ensuring permanences stay within bounds
+        self.permanences = cp.clip(self.permanences, 0, 1)
+
+        self.update_active_duty_cycle()
+        self.update_overlap_duty_cycle_and_adjust_perm()
+        self.update_boosting_values()
+
+    def update_active_duty_cycle(self):
+
+        num_timesteps = min(500, self.step)
+        #activity = self.activity.astype(cp.float32)  # Convert activity to float for calculation
+        self.active_duty_cycle = (self.active_duty_cycle * (num_timesteps - 1) + self.activity) / num_timesteps
+
+    def update_overlap_duty_cycle_and_adjust_perm(self):
+        min_duty_cycle_fraction = 0.01
+        num_timesteps = min(500, self.step)
+        current_overlaps = self.overlaps > self.stimulus_threshold
+        self.overlap_duty_cycle = (self.overlap_duty_cycle * (num_timesteps - 1) + current_overlaps) / num_timesteps
+
+        # Adjust permanences if necessary
+        max_duty_cycle = cp.max(self.overlap_duty_cycle)
+        min_duty_cycle = min_duty_cycle_fraction * max_duty_cycle
+        columns_to_increase = self.overlap_duty_cycle < min_duty_cycle
+        columns_to_increase_reshaped = columns_to_increase.reshape(1, 1, -1)
+
+        increase_amount = 0.1 * self.connected_perm
+
+        # Create a broadcasted mask that matches the shape of self.permanences
+        broadcasted_mask = cp.broadcast_to(columns_to_increase_reshaped, self.permanences.shape)
+
+        # Apply the increase to the permanences where columns need to be increased
+        self.permanences[broadcasted_mask] += increase_amount
+
+        # Ensuring permanences stay within bounds
+        self.permanences = cp.clip(self.permanences, 0, 1)
+
+    def boost_function(self):
+        """
+        Boosting function for adjusting the active duty cycle.
+
+        Parameters:
+            active_duty_cycle (cp.ndarray): The active duty cycle of columns.
+
+        Returns:
+            cp.ndarray: The boosted values.
+        """
+        mean_neighbors_duty_cycle = cp.mean(self.active_duty_cycle)
+        return cp.exp(self.boost_strength * (mean_neighbors_duty_cycle - self.active_duty_cycle))
+
+    def update_boosting_values(self):
+        """
+        Updates the boosting values for all columns.
+        """
+        self.boosting_values = self.boost_function()
+
+    
