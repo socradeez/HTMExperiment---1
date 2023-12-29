@@ -114,6 +114,7 @@ class L2Layer(NeuronLayer):
     def run_timestep(self, learn, new_object):
         if new_object and learn or (not learn):
             self.ff_activity = self.ffp_layer.get_activity(inhibition=1)
+            print('ff overlaps: ', self.ffp_layer.compute_overlaps(True))
 
             active_count = cp.sum(self.ff_activity)
             if active_count < self.min_active_neurons:

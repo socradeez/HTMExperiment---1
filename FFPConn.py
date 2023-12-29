@@ -26,7 +26,7 @@ class FFProximalConnection:
 
     def _initialize_permanences(self):
 
-        perms = cp.random.uniform(self.connected_perm - self.initial_perm_range, self.connected_perm + self.initial_perm_range, (self.input_columns, self.input_neurons_per_column, self.num_dendrites))
+        perms = cp.random.normal(self.connected_perm - self.initial_perm_range, self.connected_perm + self.initial_perm_range, (self.input_columns, self.input_neurons_per_column, self.num_dendrites))
         return perms
     
     def get_activity(self, inhibition=1, boosting=True):

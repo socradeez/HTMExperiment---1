@@ -27,6 +27,9 @@ class Column:
 
     def reset_layer(self):
         self.L2.reset_layer()
+
+    def get_active_L2(self):
+        return self.L2.active_neurons
         
 
     
