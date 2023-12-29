@@ -111,53 +111,57 @@ class L2Layer(NeuronLayer):
         lc_layer = LateralConnection(self, target_column.L2, concurrent=False, activation_threshold=lc_threshold)
         self.lc_layers.append(lc_layer)
 
-    def run_timestep(self, learn):
-        self.ff_activity = self.ffp_layer.get_activity(inhibition=1)
+    def run_timestep(self, learn, new_object):
+        if new_object and learn or (not learn):
+            self.ff_activity = self.ffp_layer.get_activity(inhibition=1)
 
+            active_count = cp.sum(self.ff_activity)
+            if active_count < self.min_active_neurons:
+                neurons_to_activate = self.min_active_neurons - active_count
 
-        active_count = cp.sum(self.ff_activity)
-        if active_count < self.min_active_neurons:
-            neurons_to_activate = self.min_active_neurons - active_count
+                inactive_indices = cp.where(self.ff_activity.flatten() == 0)
 
-            inactive_indices = cp.where(self.ff_activity.flatten() == 0)
+                selected_indices = cp.random.choice(inactive_indices, size=neurons_to_activate, replace=False)
 
-            selected_indices = cp.random.choice(inactive_indices, size=neurons_to_activate, replace=False)
+                # Activate the selected neurons
+                self.ff_activity.ravel()[selected_indices] = 1
 
-            # Activate the selected neurons
-            self.ff_activity.ravel()[selected_indices] = 1
-
-            self.ffp_layer.activity = self.ff_activity
-        
-        self.ff_activity = self.ff_activity.reshape((self.num_columns, self.neurons_per_column))
-
-        self.active_segments_by_neuron = cp.zeros((self.num_columns, self.neurons_per_column), dtype=int)
-
-        for connection in self.lc_layers:
-            self.active_segments_by_neuron += connection.get_active_segments_by_cell()
-
-        supported_neurons_mask = cp.clip(self.active_segments_by_neuron, 0, 1)
-
-        if cp.count_nonzero(supported_neurons_mask) < self.min_active_neurons:
-            self.active_neurons = self.ff_activity
-            neurons_to_activate = self.min_active_neurons - int(cp.count_nonzero(supported_neurons_mask))
-
-            inactive_indices = cp.where(supported_neurons_mask.flatten() == 0)[0].astype(int)
-            selected_indices = cp.random.choice(inactive_indices, size=neurons_to_activate, replace=False)
-
-            for index in selected_indices:
-                for layer in self.lc_layers:
-                    layer.create_distal_segment(index)
+                self.ffp_layer.activity = self.ff_activity
             
-        else:
-            support_threshold = cp.sort(self.active_segments_by_neuron.ravel())[-self.min_active_neurons]
-            supported_neurons = self.active_segments_by_neuron > support_threshold
-            self.active_neurons = cp.logical_and(self.ff_activity, supported_neurons)
-        self.active_neurons = sparse.csr_matrix(self.active_neurons)
+            self.ff_activity = self.ff_activity.reshape((self.num_columns, self.neurons_per_column))
 
-        if self.active_neurons.count_nonzero() < self.max_active_neurons and learn:
-            self.learn()
-        
-        self.previous_active_neurons = self.active_neurons
+            self.active_segments_by_neuron = cp.zeros((self.num_columns, self.neurons_per_column), dtype=int)
+
+            for connection in self.lc_layers:
+                self.active_segments_by_neuron += connection.get_active_segments_by_cell()
+
+            supported_neurons_mask = cp.clip(self.active_segments_by_neuron, 0, 1)
+
+            if cp.count_nonzero(supported_neurons_mask) < self.min_active_neurons:
+                self.active_neurons = self.ff_activity
+                neurons_to_activate = self.min_active_neurons - int(cp.count_nonzero(supported_neurons_mask))
+
+                inactive_indices = cp.where(supported_neurons_mask.flatten() == 0)[0].astype(int)
+                selected_indices = cp.random.choice(inactive_indices, size=neurons_to_activate, replace=False)
+
+                for index in selected_indices:
+                    for layer in self.lc_layers:
+                        layer.create_distal_segment(index)
+                
+            else:
+                support_threshold = cp.sort(self.active_segments_by_neuron.ravel())[-self.min_active_neurons]
+                supported_neurons = self.active_segments_by_neuron > support_threshold
+                self.active_neurons = cp.logical_and(self.ff_activity, supported_neurons)
+            self.active_neurons = sparse.csr_matrix(self.active_neurons)
+
+            if self.active_neurons.count_nonzero() < self.max_active_neurons and learn:
+                self.learn()
+            
+            self.previous_active_neurons = self.active_neurons
+
+        else:
+            if learn:
+                self.learn()
 
     def learn(self):
         # Learning in FFP layer
@@ -169,6 +173,9 @@ class L2Layer(NeuronLayer):
             bdd_layer.learn()
         for lc_layer in self.lc_layers:
             lc_layer.learn()
+
+    def reset_layer(self):
+        self.previous_active_neurons = sparse.csr_matrix(self.shape, dtype=bool)
 
     
 

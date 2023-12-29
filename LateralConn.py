@@ -28,9 +28,9 @@ class LateralConnection:
     @property
     def input_array(self):
         if self._concurrent:
-            return self.input_layer.previous_active_neurons
-        else:
             return self.input_layer.active_neurons
+        else:
+            return self.input_layer.previous_active_neurons
         
     def get_active_segments_by_cell(self):
         self.get_active_segments()

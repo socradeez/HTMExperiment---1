@@ -13,10 +13,20 @@ class Column:
     def add_lateral_connection(self, target_column):
         self.L2.add_lateral_connection(target_column, 18)
 
-    def sense_feature(self, feature, location, learn=True):
+    def inference_step(self, feature, location):
         self.sensory_input.set_active_neurons(feature)
         self.location_input.set_active_neurons(location)
-        self.L4.run_timestep(learn, inhibition=0.066)
-        self.L2.run_timestep(learn)
+        self.L4.run_timestep(False, inhibition=0.066)
+        self.L2.run_timestep(False, False)
+
+    def training_step(self, feature, location, new_object):
+        self.sensory_input.set_active_neurons(feature)
+        self.location_input.set_active_neurons(location)
+        self.L4.run_timestep(True, inhibition=0.066)
+        self.L2.run_timestep(True, new_object)
+
+    def reset_layer(self):
+        self.L2.reset_layer()
+        
 
     
