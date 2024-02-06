@@ -34,7 +34,7 @@ class L4Layer(NeuronLayer):
         bdd_layer = BDDendriticConnection(self, bdd_input_layer, concurrent=concurrent, activation_threshold=bdd_threshold)
         self.bdd_layers.append(bdd_layer)
 
-    def run_timestep(self, learn, inhibition=0.02):
+    def run_timestep_infer(self, learn, inhibition=0.02):
         self.active_columns = self.ffp_layer.get_activity(inhibition, boosting=True)
         if learn:
             self.ffp_layer.learn()
@@ -71,6 +71,52 @@ class L4Layer(NeuronLayer):
         # Set all neurons in bursting columns to 1
         bursting_neurons = cp.outer(bursting_columns, cp.ones(self.neurons_per_column, dtype=bool))
         active_neurons = cp.logical_or(active_neurons, bursting_neurons)
+
+        self.active_neurons = sparse.csr_matrix(active_neurons)
+
+        # Direct learning for BDD and FFP layers
+        if learn:
+            self.learn()
+
+        self.previous_active_neurons = self.active_neurons
+
+    def run_timestep_learn(self, learn, inhibition=0.02):
+        self.active_columns = self.ffp_layer.get_activity(inhibition, boosting=True)
+        if learn:
+            self.ffp_layer.learn()
+
+        predicted_indices = cp.empty((0, 2), dtype=int)
+        for bdd_layer in self.bdd_layers:
+            predicted_cells = bdd_layer.get_predicted_cells()
+            predicted_indices = cp.vstack((predicted_indices, predicted_cells))
+
+        predicted_columns_mask = cp.zeros(self.num_columns, dtype=bool)
+
+        if predicted_indices.size > 0:
+            predicted_columns = cp.unique(predicted_indices[:, 1])
+            predicted_columns_mask[predicted_columns] = True
+
+            extended_active_columns = self.active_columns[:, None]
+            predicted_neurons = cp.zeros((self.num_columns, self.neurons_per_column))
+            neuron_indices, col_indices = predicted_indices[:, 0], predicted_indices[:, 1]
+            predicted_neurons[col_indices, neuron_indices] = True
+
+            # Set all predicted neurons in active columns to 1
+            active_neurons = cp.logical_and(predicted_neurons, extended_active_columns)
+
+        else:
+            active_neurons = cp.zeros((self.num_columns, self.neurons_per_column))
+
+        # Identify bursting columns (columns that are active but not predicted)
+        bursting_columns = cp.logical_and(self.active_columns, cp.logical_not(predicted_columns_mask))
+        bursting_winner_neurons = cp.zeros((self.num_columns, self.neurons_per_column), dtype=bool)
+        for col_idx in cp.where(bursting_columns)[0]:
+            for bdd_layer in self.bdd_layers:
+                winner_neuron_row = bdd_layer.create_distal_segment(col_idx)
+                bursting_winner_neurons[col_idx, winner_neuron_row] = True
+
+        # Set all neurons in bursting columns to 1
+        active_neurons = cp.logical_or(active_neurons, bursting_winner_neurons)
 
         self.active_neurons = sparse.csr_matrix(active_neurons)
 
@@ -135,6 +181,7 @@ class L2Layer(NeuronLayer):
 
             for connection in self.lc_layers:
                 self.active_segments_by_neuron += connection.get_active_segments_by_cell()
+                print('lclayer shape = ', connection.permanences.shape)
 
             supported_neurons_mask = cp.clip(self.active_segments_by_neuron, 0, 1)
 

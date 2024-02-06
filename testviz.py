@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 # Function to load data from HDF5 file
 def load_data_from_hdf5(file_path, step, minicolumn_index):
     with h5py.File(file_path, 'r') as file:
-        dataset_name = f'step_{step}/minicolumn_{minicolumn_index}'
+        dataset_name = f'object_{step}/minicolumn'
         data = np.array(file[dataset_name])
         return data
 

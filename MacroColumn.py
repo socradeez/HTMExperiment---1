@@ -1,6 +1,7 @@
 from Column import Column
 import random
 import h5py
+import sys
 
 class MacroColumn:
     def __init__(self, num_minicolumns):
@@ -23,15 +24,6 @@ class MacroColumn:
                 feature, location = input_object[(i + j) % len(input_object)]
                 self.minicolumns[j].training_step(feature, location, new_object)
             new_object = False
-
-        '''with h5py.File('training_data.h5', 'w') as f:
-            for step in range(steps):
-                group = f.create_group(f'step_{step}')
-                for j, minicolumn in enumerate(self.minicolumns):
-                    # Convert the sparse matrix to dense if necessary
-                    active_neurons = minicolumn.get_active_L2().A.get()
-                    # Store the dense matrix in HDF5
-                    group.create_dataset(f'minicolumn_{j}', data=active_neurons)'''
     
     def infer_on_object(self, input_object):
         pass
