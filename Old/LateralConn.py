@@ -22,7 +22,6 @@ class LateralConnection:
         self.permanences = cp.empty((0, self.input_layer.num_columns, self.input_layer.neurons_per_column), dtype=cp.float64)  # No segments initially
         self.matching_segments_mask = cp.empty((0, self.input_layer.num_columns, self.input_layer.neurons_per_column), dtype=bool)
         self.active_segments_mask = cp.empty((0, self.input_layer.num_columns, self.input_layer.neurons_per_column), dtype=bool)
-        self.segments_per_parent_neuron = cp.zeros((self.input_layer.num_columns, self.input_layer.neurons_per_column))
         self.segment_to_neuron_map = cp.empty((0, 2), dtype=int)  # Each row is a pair (row_idx, col_idx)
         self._concurrent = concurrent
 
@@ -33,24 +32,11 @@ class LateralConnection:
         else:
             return self.input_layer.previous_active_neurons
         
-    @property
-    def active_segments_mask(self):
-        connected_synapse_mask = (self.permanences >= self.connected_perm).astype(int)
-        active_connected_synapses = cp.tensordot(connected_synapse_mask, self.input_array.A, axes=([1, 2], [0, 1]))
-        active_segments_mask = active_connected_synapses > self.activation_threshold
-        return active_segments_mask
-    
-    @property
-    def matching_segments_mask(self):  
-        potential_synapse_mask = (self.permanences > 0).astype(int)
-        active_matching_segments = cp.tensordot(potential_synapse_mask, self.input_array.A, axes=([1, 2], [0, 1]))
-        matching_segments_mask = active_matching_segments > self.learning_threshold
-        return matching_segments_mask
-        
     def get_active_segments_by_cell(self):
-        active_segments_mask = self.active_segments_mask
+        self.get_active_segments()
+        self.get_matching_segments()
         # Extract active segment indices
-        active_segment_indices = active_segments_mask.nonzero()[0]
+        active_segment_indices = self.active_segments_mask.nonzero()[0]
         active_segments = self.segment_to_neuron_map[active_segment_indices]
 
         if active_segments.size == 0:
@@ -70,46 +56,43 @@ class LateralConnection:
 
         return active_segments_count
 
-    def create_distal_segments(self, requested_columns):
-        requested_columns = requested_columns.reshape(self.parent_layer.num_columns)
-        # Get the number of requested colums
-        num_new_segments = requested_columns.count_nonzero()
 
-        # Get the index of each requested column
-        selected_columns_indices = cp.where(requested_columns)[0]
+    def create_distal_segment(self, col_idx):
+        # Number of neurons per column
+        num_neurons = self.parent_layer.neurons_per_column
 
-        # Get the count of segments for each neuron in the selected column
-        num_segments_per_neuron = self.segments_per_parent_neuron[requested_columns]
-        
-        # Get the indices of the neuron with the fewest segments in each selected column
-        indices = cp.argmin(num_segments_per_neuron, axis=1)
+        # Count segments for each neuron in the specified column
+        segment_counts = cp.zeros(num_neurons, dtype=int)
+        for row in range(num_neurons):
+            segment_counts[row] = cp.sum((self.segment_to_neuron_map[:, 0] == row) & (self.segment_to_neuron_map[:, 1] == col_idx))
+
+        # Find the neuron(s) with the fewest segments
+        min_segments = cp.min(segment_counts)
+        neurons_with_min_segments = cp.where(segment_counts == min_segments)[0]
+
+        # Randomly select one of these neurons
+        selected_row = cp.random.choice(neurons_with_min_segments, size=1)
+        neuron_idx = cp.array([selected_row, cp.array([col_idx])]).reshape(1, 2)
 
         # Determine initial permanences for the new segment
         initial_permanences = cp.random.uniform(self.connected_perm - self.initial_perm_range, 
                                                 self.connected_perm + self.initial_perm_range, 
-                                                (num_new_segments, self.input_layer.num_columns, self.input_layer.neurons_per_column))
+                                                (self.input_layer.num_columns, self.input_layer.neurons_per_column))
         
-        # Set permanences ONLY for active neurons in the input layer
-        activity_mask = cp.repeat(self.input_array.A[cp.newaxis, :, :], initial_permanences.shape[0], axis=0)
-        new_segments = initial_permanences * activity_mask
-
-        # Use the column and row indices 
-        neuron_index_pairs = cp.stack((indices, selected_columns_indices), axis=1)
+        # Set the permanences for active synapses
+        new_segment = initial_permanences * self.input_array.A
+        new_segment = initial_permanences.reshape(1, self.input_layer.num_columns, self.input_layer.neurons_per_column)
 
         # Add the new segment to the permanence matrix and update the mapping array
-        if self.permanences.size == 0:
-            self.permanences = new_segments
-            self.segment_to_neuron_map = neuron_index_pairs
-        else:
-            self.permanences = cp.concatenate((self.permanences, new_segments), axis=0)
-            self.segment_to_neuron_map = cp.concatenate((self.segment_to_neuron_map, neuron_index_pairs), axis=0)
+        self.permanences = cp.vstack((self.permanences, new_segment))
+        self.segment_to_neuron_map = cp.vstack((self.segment_to_neuron_map, neuron_idx))
 
     def learn(self):
-        active_segments_mask = self.active_segments_mask
-        matching_segments_mask = self.matching_segments_mask
         if self.active_segments_mask.size > 0:
+            self.get_active_segments()
+            self.get_matching_segments()
             # Reshape and broadcast active_segments_mask to match the shape of perms
-            active_segments_mask_broadcasted = active_segments_mask[:, cp.newaxis, cp.newaxis]
+            active_segments_mask_broadcasted = self.active_segments_mask[:, cp.newaxis, cp.newaxis]
             active_segments_mask_broadcasted = cp.broadcast_to(active_segments_mask_broadcasted, self.permanences.shape)
 
             # Create active input mask
@@ -124,7 +107,7 @@ class LateralConnection:
             decrement_mask_active = active_segments_mask_broadcasted & inactive_input_mask
             self.permanences[decrement_mask_active] -= self.syn_perm_inactive_dec
 
-            matching_segments_mask_broadcasted = matching_segments_mask[:, cp.newaxis, cp.newaxis]
+            matching_segments_mask_broadcasted = self.matching_segments_mask[:, cp.newaxis, cp.newaxis]
             matching_segments_mask_broadcasted = cp.broadcast_to(matching_segments_mask_broadcasted, self.permanences.shape)
             # Decrement for Matching Inactive Segments with Active Inputs
             decrement_mask_matching = matching_segments_mask_broadcasted & ~active_segments_mask_broadcasted & active_input_mask
@@ -133,4 +116,17 @@ class LateralConnection:
             # Ensure permanences stay within bounds
             self.permanences = cp.clip(self.permanences, 0, 1)
 
+    def get_active_segments(self):
+        connected_synapse_mask = (self.permanences >= self.connected_perm).astype(int)
+        active_connected_synapses = cp.tensordot(connected_synapse_mask, self.input_array.A, axes=([1, 2], [0, 1]))
+        self.active_segments_mask = active_connected_synapses > self.activation_threshold
+        return self.active_segments_mask
+    
+    def get_matching_segments(self):
+        
+        potential_synapse_mask = (self.permanences > 0).astype(int)
+        active_matching_segments = cp.tensordot(potential_synapse_mask, self.input_array.A, axes=([1, 2], [0, 1]))
+        self.matching_segments_mask = active_matching_segments > self.learning_threshold
+
+        return self.matching_segments_mask
         

@@ -9,20 +9,27 @@ class Column:
         self.L4 = L4Layer(self, 150, 16, self.sensory_input, 0)
         self.L2 = L2Layer(self, 4096, 1, self.L4, 4, 40, 65)
         self.L4.add_context_connection(self.location_input, 6, True)
-        self.L2.add_context_connection(self.L2, 6)
 
     def add_lateral_connection(self, target_column):
         self.L2.add_lateral_connection(target_column, 18)
 
-    def update_activity(self, feature, location):
+    def inference_step(self, feature, location):
         self.sensory_input.set_active_neurons(feature)
         self.location_input.set_active_neurons(location)
-        self.L4.update_active_neurons(inhibition=0.067)
-        self.L2.update_active_neurons()
+        self.L4.run_timestep_infer(False, inhibition=0.067)
+        self.L2.run_timestep(False, False)
 
-    def learn(self):
-        self.L4.learn()
-        self.L2.learn()
+    def training_step(self, feature, location, new_object):
+        self.sensory_input.set_active_neurons(feature)
+        self.location_input.set_active_neurons(location)
+        self.L4.run_timestep_learn(True, inhibition=0.067)
+        self.L2.run_timestep(True, new_object)
 
-    def get_active_counts(self):
-        return self.L2.active_neurons.count_nonzero(), self.L4.active_neurons.count_nonzero()
+    def reset_layer(self):
+        self.L2.reset_layer()
+
+    def get_active_L2(self):
+        return self.L2.active_neurons
+        
+
+    
