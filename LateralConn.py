@@ -20,9 +20,7 @@ class LateralConnection:
         self.activation_threshold = activation_threshold
         self.learning_threshold = learning_threshold
         self.permanences = cp.empty((0, self.input_layer.num_columns, self.input_layer.neurons_per_column), dtype=cp.float64)  # No segments initially
-        self.matching_segments_mask = cp.empty((0, self.input_layer.num_columns, self.input_layer.neurons_per_column), dtype=bool)
-        self.active_segments_mask = cp.empty((0, self.input_layer.num_columns, self.input_layer.neurons_per_column), dtype=bool)
-        self.segments_per_parent_neuron = cp.zeros((self.input_layer.num_columns, self.input_layer.neurons_per_column))
+        self.segments_per_parent_neuron = cp.zeros((self.parent_layer.num_columns, self.parent_layer.neurons_per_column))
         self.segment_to_neuron_map = cp.empty((0, 2), dtype=int)  # Each row is a pair (row_idx, col_idx)
         self._concurrent = concurrent
 
@@ -67,19 +65,19 @@ class LateralConnection:
 
         # Reshape the counts to the shape of parent_layer.active_neurons
         active_segments_count = counts.reshape(self.parent_layer.num_columns, self.parent_layer.neurons_per_column)
-
+        print('number of neurons with active segments = ', cp.count_nonzero(active_segments_count))
         return active_segments_count
 
     def create_distal_segments(self, requested_columns):
         requested_columns = requested_columns.reshape(self.parent_layer.num_columns)
         # Get the number of requested colums
-        num_new_segments = requested_columns.count_nonzero()
+        num_new_segments = int(cp.sum(requested_columns))
 
         # Get the index of each requested column
         selected_columns_indices = cp.where(requested_columns)[0]
 
-        # Get the count of segments for each neuron in the selected column
-        num_segments_per_neuron = self.segments_per_parent_neuron[requested_columns]
+        # Get the count of segments for each neuron in the selected columns
+        num_segments_per_neuron = self.segments_per_parent_neuron[selected_columns_indices]
         
         # Get the indices of the neuron with the fewest segments in each selected column
         indices = cp.argmin(num_segments_per_neuron, axis=1)

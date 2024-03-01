@@ -77,10 +77,19 @@ class FFProximalConnection:
             num_candidates = cp.sum(candidates)
 
             if num_candidates > k:
-                # If more than k candidates, select k of them at random
+                # Identify candidate indices
                 candidate_indices = cp.where(candidates)[0]
-                chosen_indices = cp.random.choice(candidate_indices, size=k, replace=False)
+                
+                # Sort candidate indices by their overlap values in descending order
+                sorted_candidates = candidate_indices[cp.argsort(overlaps[candidate_indices])[::-1]]
+                
+                # Select the top k indices with the highest overlaps
+                chosen_indices = sorted_candidates[:k]
+                
+                # Initialize the activity array to all False
                 self.activity = cp.zeros_like(overlaps, dtype=bool)
+                
+                # Set the chosen indices to True
                 self.activity[chosen_indices] = True
             else:
                 # If k or fewer candidates, activate all of them

@@ -7,7 +7,7 @@ class Column:
         self.sensory_input = NeuronLayer(self, 150, 1)
         self.location_input = NeuronLayer(self, 2400, 1)
         self.L4 = L4Layer(self, 150, 16, self.sensory_input, 0)
-        self.L2 = L2Layer(self, 4096, 1, self.L4, 4, 40, 65)
+        self.L2 = L2Layer(self, 4096, 1, self.L4, 4, 40, 450)
         self.L4.add_context_connection(self.location_input, 6, True)
         self.L2.add_context_connection(self.L2, 6)
 

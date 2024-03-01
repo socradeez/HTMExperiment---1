@@ -63,13 +63,14 @@ class L4Layer(NeuronLayer):
 
         # Identify bursting columns (columns that are active but not predicted)
         bursting_columns = cp.logical_and(active_columns, cp.logical_not(predicted_columns_mask))
-        for col_idx in cp.where(bursting_columns)[0]:
-            for bdd_layer in self.bdd_layers:
-                bdd_layer.create_distal_segment(col_idx)
+        if cp.any(bursting_columns):
+            for connection in self.bdd_layers:
+                connection.create_distal_segments(bursting_columns)
 
         # Set all neurons in bursting columns to 1
         bursting_neurons = cp.outer(bursting_columns, cp.ones(self.neurons_per_column, dtype=bool))
         active_neurons = cp.logical_or(active_neurons, bursting_neurons)
+        self.previous_active_neurons = self.active_neurons
         self.active_neurons = sparse.csr_matrix(active_neurons)
 
     def learn(self):
@@ -107,28 +108,32 @@ class L2Layer(NeuronLayer):
         active_segments_by_neuron = cp.zeros((self.num_columns, self.neurons_per_column), dtype=int)
         for connection in self.lc_layers:
             active_segments_by_neuron += connection.get_active_segments_by_cell()
-        
-        predicted_indices = cp.empty((0, 2), dtype=int)
-        for bdd_layer in self.bdd_layers:
-            predicted_cells = bdd_layer.get_predicted_cells()
-            predicted_indices = cp.vstack((predicted_indices, predicted_cells))
-        print("active segments for layer 2:", predicted_indices)
+        for connection in self.bdd_layers:
+            active_segments_by_neuron += connection.get_active_segments_by_cell()
 
         supported_neurons_mask = cp.clip(active_segments_by_neuron, 0, 1)
 
         if cp.count_nonzero(supported_neurons_mask) < self.min_active_neurons:
-            self.active_neurons = self.ff_activity
+            active_neurons = self.ff_activity
 
-            segment_candidates = self.active_neurons - supported_neurons_mask
+            if cp.sum(active_neurons) > self.max_active_neurons:
+                sparsity = self.max_active_neurons / (self.num_columns * self.neurons_per_column)
+                sparsity_mask = cp.random.rand(self.num_columns, self.neurons_per_column) < sparsity
+                active_neurons = active_neurons * sparsity_mask
+
+            segment_candidates = active_neurons - supported_neurons_mask
             for lclayer in self.lc_layers:
                 lclayer.create_distal_segments(segment_candidates)
+            for bdlayer in self.bdd_layers:
+                bdlayer.create_distal_segments(segment_candidates)
             
         else:
             support_threshold = cp.sort(active_segments_by_neuron.ravel())[-self.min_active_neurons]
             supported_neurons = active_segments_by_neuron > support_threshold
-            self.active_neurons = cp.logical_and(self.ff_activity, supported_neurons)
+            active_neurons = cp.logical_and(self.ff_activity, supported_neurons)
 
-        self.active_neurons = sparse.csr_matrix(self.active_neurons)
+        self.previous_active_neurons = self.active_neurons
+        self.active_neurons = sparse.csr_matrix(active_neurons)
 
     def learn(self):
         # Learning in FFP layer
