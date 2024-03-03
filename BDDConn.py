@@ -6,7 +6,7 @@ class BDDendriticConnection:
     """
     Represents Basal Distal Dendritic Connections in a Hierarchical Temporal Memory (HTM) system.
     """
-    syn_perm_active_inc = 0.1
+    syn_perm_active_inc = 0.25
     syn_perm_inactive_dec = 0.03
     syn_creation_prob = 0.5  # Probability of creating a new synapse
 

@@ -7,8 +7,8 @@ class LateralConnection:
     Represents Basal Distal Dendritic Connections in a Hierarchical Temporal Memory (HTM) system.
     """
 
-    syn_perm_active_inc = 0.1
-    syn_perm_inactive_dec = 0.1
+    syn_perm_active_inc = 0.25
+    syn_perm_inactive_dec = 0.03
     syn_creation_prob = 0.5  # Probability of creating a new synapse
 
     def __init__(self, parent_layer, input_layer, concurrent=False, activation_threshold=5, learning_threshold=5, connected_perm=0.5, initial_perm_range=0.2):
@@ -65,7 +65,6 @@ class LateralConnection:
 
         # Reshape the counts to the shape of parent_layer.active_neurons
         active_segments_count = counts.reshape(self.parent_layer.num_columns, self.parent_layer.neurons_per_column)
-        print('number of neurons with active segments = ', cp.count_nonzero(active_segments_count))
         return active_segments_count
 
     def create_distal_segments(self, requested_columns):

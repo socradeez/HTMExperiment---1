@@ -3,7 +3,7 @@ from cupy import sparse
 
 class FFProximalConnection:
 
-    syn_perm_active_inc = 0.1
+    syn_perm_active_inc = 0.25
     syn_perm_inactive_dec = 0.03
 
     def __init__(self, parent_layer, input_layer, connected_perm=0.5, initial_perm_range=0.3, boost_strength=1, stim_threshold=3, boosting=True):

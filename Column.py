@@ -10,6 +10,7 @@ class Column:
         self.L2 = L2Layer(self, 4096, 1, self.L4, 4, 40, 450)
         self.L4.add_context_connection(self.location_input, 6, True)
         self.L2.add_context_connection(self.L2, 6)
+        self.L4.add_context_connection(self.L2, 6, concurrent=False)
 
     def add_lateral_connection(self, target_column):
         self.L2.add_lateral_connection(target_column, 18)

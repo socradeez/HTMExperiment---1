@@ -46,6 +46,7 @@ class L4Layer(NeuronLayer):
         predicted_columns_mask = cp.zeros(self.num_columns, dtype=bool)
 
         if predicted_indices.size > 0:
+            predicted_indices = predicted_indices.astype(int)
             predicted_columns = cp.unique(predicted_indices[:, 1])
             predicted_columns_mask[predicted_columns] = True
 
@@ -113,7 +114,7 @@ class L2Layer(NeuronLayer):
 
         supported_neurons_mask = cp.clip(active_segments_by_neuron, 0, 1)
 
-        if cp.count_nonzero(supported_neurons_mask) < self.min_active_neurons:
+        if cp.sum(supported_neurons_mask) < self.min_active_neurons:
             active_neurons = self.ff_activity
 
             if cp.sum(active_neurons) > self.max_active_neurons:
@@ -122,6 +123,7 @@ class L2Layer(NeuronLayer):
                 active_neurons = active_neurons * sparsity_mask
 
             segment_candidates = active_neurons - supported_neurons_mask
+            segment_candidates = cp.clip(segment_candidates, 0, 1)
             for lclayer in self.lc_layers:
                 lclayer.create_distal_segments(segment_candidates)
             for bdlayer in self.bdd_layers:
@@ -129,8 +131,15 @@ class L2Layer(NeuronLayer):
             
         else:
             support_threshold = cp.sort(active_segments_by_neuron.ravel())[-self.min_active_neurons]
-            supported_neurons = active_segments_by_neuron > support_threshold
+            supported_neurons = active_segments_by_neuron >= support_threshold
             active_neurons = cp.logical_and(self.ff_activity, supported_neurons)
+            segment_candidates = active_neurons - supported_neurons_mask
+            segment_candidates = cp.clip(segment_candidates, 0, 1)
+            print('segment candidates are = ', cp.sum(segment_candidates))
+            for lclayer in self.lc_layers:
+                lclayer.create_distal_segments(segment_candidates)
+            for bdlayer in self.bdd_layers:
+                bdlayer.create_distal_segments(segment_candidates)
 
         self.previous_active_neurons = self.active_neurons
         self.active_neurons = sparse.csr_matrix(active_neurons)
