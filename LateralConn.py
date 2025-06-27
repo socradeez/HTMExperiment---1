@@ -90,7 +90,7 @@ class LateralConnection:
         activity_mask = cp.repeat(self.input_array.A[cp.newaxis, :, :], initial_permanences.shape[0], axis=0)
         new_segments = initial_permanences * activity_mask
 
-        # Use the column and row indices 
+        # Use the column and row indices
         neuron_index_pairs = cp.stack((indices, selected_columns_indices), axis=1)
 
         # Add the new segment to the permanence matrix and update the mapping array
@@ -100,6 +100,9 @@ class LateralConnection:
         else:
             self.permanences = cp.concatenate((self.permanences, new_segments), axis=0)
             self.segment_to_neuron_map = cp.concatenate((self.segment_to_neuron_map, neuron_index_pairs), axis=0)
+
+        # Update the segment count for the neurons that received new segments
+        cp.add.at(self.segments_per_parent_neuron, (selected_columns_indices, indices), 1)
 
     def learn(self):
         active_segments_mask = self.active_segments_mask
