@@ -3,6 +3,9 @@ from BDDConn import BDDendriticConnection
 from LateralConn import LateralConnection
 import cupy as cp
 from cupy import sparse
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class NeuronLayer:
@@ -135,7 +138,7 @@ class L2Layer(NeuronLayer):
             active_neurons = cp.logical_and(self.ff_activity, supported_neurons)
             segment_candidates = active_neurons - supported_neurons_mask
             segment_candidates = cp.clip(segment_candidates, 0, 1)
-            print('segment candidates are = ', cp.sum(segment_candidates))
+            logger.debug('Segment candidates: %s', cp.sum(segment_candidates))
             for lclayer in self.lc_layers:
                 lclayer.create_distal_segments(segment_candidates)
             for bdlayer in self.bdd_layers:
