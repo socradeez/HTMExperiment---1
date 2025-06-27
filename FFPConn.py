@@ -6,7 +6,7 @@ class FFProximalConnection:
     syn_perm_active_inc = 0.25
     syn_perm_inactive_dec = 0.03
 
-    def __init__(self, parent_layer, input_layer, connected_perm=0.5, initial_perm_range=0.3, boost_strength=1, stim_threshold=3, boosting=True):
+    def __init__(self, parent_layer, input_layer, connected_perm=0.5, initial_perm_range=0.3, boost_strength=1, stim_threshold=3, boosting=True, init_distribution='uniform'):
 
         self.perm_sparsity = 0.5
         self.parent_layer = parent_layer
@@ -20,6 +20,7 @@ class FFProximalConnection:
         self.boosting_values = cp.ones((self.num_dendrites, ))
         self.boost_strength = boost_strength
         self.step = 1
+        self.init_distribution = init_distribution
         self.permanences = self._initialize_permanences()
 
     @property
@@ -50,10 +51,27 @@ class FFProximalConnection:
         return overlaps
 
     def _initialize_permanences(self):
-        # Generate a fully connected layer of permanences in a normal distribution centered over the connection threshold
-        perms = cp.random.normal(self.connected_perm - self.initial_perm_range, 
-                                 self.connected_perm + self.initial_perm_range, 
-                                 (self.input_columns, self.input_neurons_per_column, self.num_dendrites))
+        """Initialize synapse permanences.
+
+        Permanences are generated around ``connected_perm``. The distribution
+        used is controlled by ``self.init_distribution`` and can be ``'uniform'``
+        or ``'normal'``.  For the normal distribution ``initial_perm_range`` is
+        treated as the standard deviation while for the uniform distribution it
+        represents the half range around ``connected_perm``.
+        """
+
+        shape = (self.input_columns, self.input_neurons_per_column, self.num_dendrites)
+
+        if self.init_distribution == 'normal':
+            perms = cp.random.normal(loc=self.connected_perm,
+                                     scale=self.initial_perm_range,
+                                     size=shape)
+        else:
+            low = self.connected_perm - self.initial_perm_range
+            high = self.connected_perm + self.initial_perm_range
+            perms = cp.random.uniform(low, high, size=shape)
+
+        perms = cp.clip(perms, 0, 1)
 
         # Create a binary mask with the specified sparsity
         sparsity_mask = cp.random.rand(self.input_columns, self.input_neurons_per_column, self.num_dendrites) < self.perm_sparsity
