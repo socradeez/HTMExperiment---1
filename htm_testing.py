@@ -462,35 +462,44 @@ class ConfidenceModulatedTM(TemporalMemory):
 
     def _adapt_segment_with_hardening(self, cell_id, seg_idx, segment, active_cells,
                                       learning_rate, positive=True):
-        """Update synapses with graded hardening."""
+        """Update synapses with a more direct and potent hardening mechanism."""
+
+        # Determine if hardening should be applied this step
+        is_hardening_active = (
+            self.current_system_confidence >= self.hardening_threshold
+        )
+
         for i, (target_cell, perm) in enumerate(list(segment['synapses'])):
             hardness = self.synapse_hardness[cell_id].get((seg_idx, i), 0.0)
-            old_hardness = hardness
-            effective_rate = learning_rate * (1.0 - hardness)
+
+            # --- Asymmetric Permanence Update ---
+            protection_factor = hardness
 
             if target_cell in active_cells:
-                if positive:
-                    new_perm = perm + effective_rate
-                else:
-                    new_perm = perm - effective_rate
+                # Positive reinforcement resisted by hardness
+                effective_rate = learning_rate * (1.0 - hardness * 0.5)
+                new_perm = perm + effective_rate
             else:
-                if positive:
-                    new_perm = perm - 0.1 * effective_rate
-                else:
-                    new_perm = perm - self.permanence_decrement
+                # Decay strongly resisted by hardness
+                effective_decay = (0.1 * learning_rate) * (1.0 - protection_factor)
+                new_perm = perm - effective_decay
 
-            surplus = max(0.0, self.current_system_confidence - self.hardening_threshold)
-            if surplus > 0.0:
-                hardness = min(1.0, hardness + self.hardening_rate * surplus)
+            segment['synapses'][i] = (
+                target_cell, float(np.clip(new_perm, 0.0, 1.0))
+            )
+
+            # --- Hardness Update ---
+            if is_hardening_active and target_cell in active_cells:
+                new_hardness = min(1.0, hardness + self.hardening_rate)
             else:
-                hardness = max(0.0, hardness - 0.5 * self.hardening_rate)
-            self.synapse_hardness[cell_id][(seg_idx, i)] = hardness
-            if hardness > old_hardness:
-                self._hardening_updates += 1
-            self._hardness_sum += hardness
+                new_hardness = max(0.0, hardness - 0.01 * self.hardening_rate)
+
+            self.synapse_hardness[cell_id][(seg_idx, i)] = new_hardness
+
+            # Instrumentation
+            self._hardening_updates += 1
+            self._hardness_sum += new_hardness
             self._hardness_count += 1
-
-            segment['synapses'][i] = (target_cell, float(np.clip(new_perm, 0.0, 1.0)))
 
     def _grow_segment(self, cell_id, source_cells):
         """Create new segment with owner metadata."""
