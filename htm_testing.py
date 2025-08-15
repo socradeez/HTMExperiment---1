@@ -447,18 +447,22 @@ class ConfidenceModulatedTM(TemporalMemory):
     def _confidence_modulated_learning(self):
         """Apply learning with confidence-based modulation on winner cells."""
         for cell_id in list(self.winner_cells):
-            cell_conf = self.current_cell_confidences.get(cell_id, 0.5)
-
             if self.current_system_confidence < self.confidence_threshold:
                 learning_rate = self.base_learning_rate * self.exploration_bonus
             else:
-                learning_rate = self.base_learning_rate * (1.0 - cell_conf * 0.5)
+                learning_rate = self.base_learning_rate
 
             for seg_idx, segment in enumerate(self.segments.get(cell_id, [])):
                 n_active = self._count_active_synapses(segment, self.active_cells)
                 if n_active >= self.learning_threshold:
-                    self._adapt_segment_with_hardening(cell_id, seg_idx, segment,
-                                                      self.active_cells, learning_rate, positive=True)
+                    self._adapt_segment_with_hardening(
+                        cell_id,
+                        seg_idx,
+                        segment,
+                        self.active_cells,
+                        learning_rate,
+                        positive=True,
+                    )
 
     def _adapt_segment_with_hardening(self, cell_id, seg_idx, segment, active_cells,
                                       learning_rate, positive=True):
