@@ -465,6 +465,7 @@ class ConfidenceModulatedTM(TemporalMemory):
         """Update synapses with graded hardening."""
         for i, (target_cell, perm) in enumerate(list(segment['synapses'])):
             hardness = self.synapse_hardness[cell_id].get((seg_idx, i), 0.0)
+            old_hardness = hardness
             effective_rate = learning_rate * (1.0 - hardness)
 
             if target_cell in active_cells:
@@ -484,7 +485,8 @@ class ConfidenceModulatedTM(TemporalMemory):
             else:
                 hardness = max(0.0, hardness - 0.5 * self.hardening_rate)
             self.synapse_hardness[cell_id][(seg_idx, i)] = hardness
-            self._hardening_updates += 1
+            if hardness > old_hardness:
+                self._hardening_updates += 1
             self._hardness_sum += hardness
             self._hardness_count += 1
 
