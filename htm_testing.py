@@ -851,14 +851,21 @@ class TestSuite:
                         for v in seq:
                             r = net.compute(encoder.encode(v), learn=False)
                             accs.append(1.0 - r['anomaly_score'])
-                        return float(np.mean(accs)) if accs else 0.0
+                        return {
+                            'mean_acc': float(np.mean(accs)) if accs else 0.0,
+                            'last_step_acc': float(accs[-1]) if accs else 0.0
+                        }
 
                     train_on(seq_a)
-                    initial = eval_on(seq_a)
+                    metrics = eval_on(seq_a)
+                    initial = metrics['last_step_acc']
+                    initial_mean = metrics['mean_acc']
                     reps_before = self.capture_transition_reprs(net, seq_a, encoder)
 
                     train_on(seq_b)
-                    retention = eval_on(seq_a)
+                    metrics = eval_on(seq_a)
+                    retention = metrics['last_step_acc']
+                    retention_mean = metrics['mean_acc']
                     reps_after = self.capture_transition_reprs(net, seq_a, encoder)
 
                     stability = []
@@ -877,8 +884,10 @@ class TestSuite:
                         'hardening_rate': rate,
                         'hardening_threshold': thresh,
                         'seed': seed,
-                        'initial_accuracy': initial,
-                        'retention_accuracy': retention,
+                        'initial_last_step_acc': initial,
+                        'initial_mean_acc': initial_mean,
+                        'retention_last_step_acc': retention,
+                        'retention_mean_acc': retention_mean,
                         'representation_stability': stab,
                         'mean_conf': mean_conf,
                         'frac_conf_ge_thr': frac_conf,
@@ -897,7 +906,8 @@ class TestSuite:
         csv_path = 'hardening_sweep.csv'
         with open(csv_path, 'w', newline='') as f:
             writer = csv.DictWriter(f, fieldnames=['hardening_rate', 'hardening_threshold', 'seed',
-                                                   'initial_accuracy', 'retention_accuracy',
+                                                   'initial_last_step_acc', 'initial_mean_acc',
+                                                   'retention_last_step_acc', 'retention_mean_acc',
                                                    'representation_stability', 'mean_conf',
                                                    'frac_conf_ge_thr', 'mean_hardness',
                                                    'hardening_updates'])
