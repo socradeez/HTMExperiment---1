@@ -665,6 +665,76 @@ class TestSuite:
         self.results["scaling_study"] = results
         print("✓ Scaling study complete:", results)
 
+    def test_branching_context_disambiguation(self, prefix=3, length=15, seeds=None):
+        """
+        Two sequences share a prefix of 'prefix' items, then diverge:
+          A: p0, p1, ..., p{prefix-1}, a_prefix, a_{prefix+1}, ...
+          B: p0, p1, ..., p{prefix-1}, b_prefix, b_{prefix+1}, ...
+        Measure prediction accuracy at and after the branching point.
+        """
+        print("\n--- Branching / Context Disambiguation ---")
+        import numpy as np
+        seeds = seeds or [0, 1, 2]
+        encoder = ScalarEncoder(min_val=0, max_val=100, n_bits=100)
+
+        def build_AB(prefix, length):
+            assert length > prefix + 2
+            P = list(range(10, 10 + prefix))                    # shared prefix centers
+            A = P + list(range(20, 20 + (length - prefix)))     # A tail
+            B = P + list(range(40, 40 + (length - prefix)))     # B tail
+            return A, B
+
+        A, B = build_AB(prefix, length)
+
+        results = {"prefix": prefix, "length": length, "baseline": {}, "confidence": {}}
+
+        for model_name in ["baseline", "confidence"]:
+            branch_acc = []      # accuracy exactly at the first divergent element
+            post_acc = []        # mean accuracy for the next 3 steps after branching
+
+            for s in seeds:
+                base, conf = self._build_networks(s)
+                net = base if model_name == "baseline" else conf
+
+                # Train alternating A and B to encourage context learning
+                for _ in range(30):
+                    net.reset_sequence()
+                    for v in A: net.compute(encoder.encode(v))
+                    net.reset_sequence()
+                    for v in B: net.compute(encoder.encode(v))
+
+                # Evaluate at branching point
+                def eval_branch(net, seq_prev, seq_next):
+                    # run all up to branching index (prefix-1), then present branching element and record accuracy
+                    net.reset_sequence()
+                    for i, v in enumerate(seq_prev):
+                        if i == prefix:
+                            break
+                        net.compute(encoder.encode(v), learn=False)
+                    # step at branching
+                    r0 = net.compute(encoder.encode(seq_next[prefix]), learn=False)
+                    a0 = float(1.0 - r0['anomaly_score'])
+                    # next few steps
+                    post = []
+                    for j in range(prefix+1, min(prefix+4, len(seq_next))):
+                        rj = net.compute(encoder.encode(seq_next[j]), learn=False)
+                        post.append(float(1.0 - rj['anomaly_score']))
+                    return a0, float(np.mean(post)) if post else a0
+
+                a0, a_post = eval_branch(net, A, A)
+                b0, b_post = eval_branch(net, B, B)
+                # average A and B branches
+                branch_acc.append((a0 + b0) / 2.0)
+                post_acc.append((a_post + b_post) / 2.0)
+
+            results[model_name]["branch_acc_mean"] = float(np.mean(branch_acc))
+            results[model_name]["branch_acc_std"]  = float(np.std(branch_acc))
+            results[model_name]["post_acc_mean"]   = float(np.mean(post_acc))
+            results[model_name]["post_acc_std"]    = float(np.std(post_acc))
+
+        self.results["branching_context"] = results
+        print("✓ Branching context:", results)
+
     def run_all_tests(self):
         """Run all test suites."""
         print("="*60)
@@ -681,6 +751,7 @@ class TestSuite:
         self.test_continual_learning()
         self.test_noise_robustness()
         self.test_sequence_length_scaling()
+        self.test_branching_context_disambiguation()
 
         # Generate visualizations
         self.generate_charts()
@@ -1260,6 +1331,13 @@ class TestSuite:
             summary_text += f"Noise Resistance (20%):\n"
             summary_text += f"  Baseline: {baseline_noise:.3f}\n"
             summary_text += f"  Confidence: {confidence_noise:.3f}\n"
+
+        if 'branching_context' in self.results:
+            bc = self.results['branching_context']
+            summary_text += "\nBranching Context (branch/post):\n"
+            summary_text += f"  Baseline: {bc['baseline']['branch_acc_mean']:.3f}/{bc['baseline']['post_acc_mean']:.3f}\n"
+            summary_text += f"  Confidence: {bc['confidence']['branch_acc_mean']:.3f}/{bc['confidence']['post_acc_mean']:.3f}\n"
+            print("Branching context summary:", bc)
 
         ax.text(0.1, 0.5, summary_text, fontsize=10, family='monospace',
                 verticalalignment='center', transform=ax.transAxes)
