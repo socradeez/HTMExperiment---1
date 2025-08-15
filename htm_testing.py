@@ -6,6 +6,7 @@ import matplotlib
 matplotlib.use("Agg")  # ensure headless
 import matplotlib.pyplot as plt
 import json
+import csv
 from dataclasses import dataclass
 import warnings
 warnings.filterwarnings('ignore')
@@ -735,6 +736,192 @@ class TestSuite:
         self.results["branching_context"] = results
         print("✓ Branching context:", results)
 
+    def run_hardening_sweep(self, rates=None, thresholds=None, seeds=None, epochs_per_phase=25):
+        """Parameter sweep for hardening settings on continual learning benchmark."""
+        print("\n=== Hardening Parameter Sweep ===")
+        rates = rates or [0.0, 0.03, 0.05, 0.1, 0.2]
+        thresholds = thresholds or [0.6, 0.7, 0.8]
+        seeds = seeds or [0, 1, 2]
+
+        encoder = ScalarEncoder(min_val=0, max_val=10, n_bits=100)
+        seq_a = [1, 2, 3, 4, 5]
+        seq_b = [1, 2, 6, 7, 5]
+
+        csv_rows = []
+        summary = {}
+
+        for rate in rates:
+            for thresh in thresholds:
+                key = f"r{rate}_t{thresh}"
+                summary[key] = {"initial": [], "retention": [], "stability": []}
+                for seed in seeds:
+                    tm_params = {
+                        'cells_per_column': 8,
+                        'activation_threshold': 10,
+                        'learning_threshold': 8,
+                        'initial_permanence': 0.5,
+                        'permanence_increment': 0.1,
+                        'permanence_decrement': 0.01,
+                        'max_synapses_per_segment': 16,
+                        'seed': seed,
+                        'hardening_rate': rate,
+                        'hardening_threshold': thresh
+                    }
+                    sp_params = {'seed': seed}
+                    net = ConfidenceHTMNetwork(input_size=100, use_confidence=True,
+                                               tm_params=tm_params, sp_params=sp_params)
+
+                    def train_on(seq):
+                        for _ in range(epochs_per_phase):
+                            net.reset_sequence()
+                            for v in seq:
+                                net.compute(encoder.encode(v))
+
+                    def eval_on(seq):
+                        net.reset_sequence()
+                        accs = []
+                        for v in seq:
+                            r = net.compute(encoder.encode(v), learn=False)
+                            accs.append(1.0 - r['anomaly_score'])
+                        return float(np.mean(accs)) if accs else 0.0
+
+                    train_on(seq_a)
+                    initial = eval_on(seq_a)
+                    reps_before = self.capture_transition_reprs(net, seq_a, encoder)
+
+                    train_on(seq_b)
+                    retention = eval_on(seq_a)
+                    reps_after = self.capture_transition_reprs(net, seq_a, encoder)
+
+                    stability = []
+                    for tkey in reps_before.keys():
+                        b0 = reps_before[tkey]
+                        b1 = reps_after.get(tkey, set())
+                        stability.append(len(b0 & b1) / (len(b0) or 1))
+                    stab = float(np.mean(stability)) if stability else 0.0
+
+                    csv_rows.append({
+                        'hardening_rate': rate,
+                        'hardening_threshold': thresh,
+                        'seed': seed,
+                        'initial_accuracy': initial,
+                        'retention_accuracy': retention,
+                        'representation_stability': stab
+                    })
+
+                    summary[key]['initial'].append(initial)
+                    summary[key]['retention'].append(retention)
+                    summary[key]['stability'].append(stab)
+
+        csv_path = 'hardening_sweep.csv'
+        with open(csv_path, 'w', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=['hardening_rate', 'hardening_threshold', 'seed',
+                                                   'initial_accuracy', 'retention_accuracy',
+                                                   'representation_stability'])
+            writer.writeheader()
+            for row in csv_rows:
+                writer.writerow(row)
+
+        summary_json = {}
+        for rate in rates:
+            for thresh in thresholds:
+                key = f"r{rate}_t{thresh}"
+                data = summary[key]
+                summary_json[key] = {
+                    'hardening_rate': rate,
+                    'hardening_threshold': thresh,
+                    'initial_mean': float(np.mean(data['initial'])) if data['initial'] else 0.0,
+                    'initial_std': float(np.std(data['initial'])) if data['initial'] else 0.0,
+                    'retention_mean': float(np.mean(data['retention'])) if data['retention'] else 0.0,
+                    'retention_std': float(np.std(data['retention'])) if data['retention'] else 0.0,
+                    'stability_mean': float(np.mean(data['stability'])) if data['stability'] else 0.0,
+                    'stability_std': float(np.std(data['stability'])) if data['stability'] else 0.0
+                }
+
+        json_path = 'hardening_sweep_summary.json'
+        with open(json_path, 'w') as f:
+            json.dump(summary_json, f, indent=2)
+
+        # Heatmaps
+        retention_grid = np.array([[summary_json[f"r{r}_t{t}"]['retention_mean'] for r in rates] for t in thresholds])
+        stability_grid = np.array([[summary_json[f"r{r}_t{t}"]['stability_mean'] for r in rates] for t in thresholds])
+        fig, axs = plt.subplots(1, 2, figsize=(10, 4))
+        im0 = axs[0].imshow(retention_grid, origin='lower', aspect='auto', vmin=0, vmax=1)
+        axs[0].set_xticks(range(len(rates)))
+        axs[0].set_xticklabels(rates)
+        axs[0].set_yticks(range(len(thresholds)))
+        axs[0].set_yticklabels(thresholds)
+        axs[0].set_xlabel('Hardening Rate')
+        axs[0].set_ylabel('Hardening Threshold')
+        axs[0].set_title('Retention Accuracy')
+        fig.colorbar(im0, ax=axs[0])
+        im1 = axs[1].imshow(stability_grid, origin='lower', aspect='auto', vmin=0, vmax=1)
+        axs[1].set_xticks(range(len(rates)))
+        axs[1].set_xticklabels(rates)
+        axs[1].set_yticks(range(len(thresholds)))
+        axs[1].set_yticklabels(thresholds)
+        axs[1].set_xlabel('Hardening Rate')
+        axs[1].set_ylabel('Hardening Threshold')
+        axs[1].set_title('Representation Stability')
+        fig.colorbar(im1, ax=axs[1])
+        plt.tight_layout()
+        heatmap_path = 'hardening_sweep_heatmap.png'
+        plt.savefig(heatmap_path, dpi=150, bbox_inches='tight')
+
+        # Pareto scatter
+        plt.figure(figsize=(6, 5))
+        for r in rates:
+            for t in thresholds:
+                key = f"r{r}_t{t}"
+                d = summary_json[key]
+                plt.scatter(d['initial_mean'], d['retention_mean'], s=50 + 150*d['stability_mean'])
+                plt.annotate(f"r={r}, t={t}", (d['initial_mean'], d['retention_mean']),
+                             textcoords="offset points", xytext=(5, 5), fontsize=8)
+        plt.xlabel('Initial Accuracy')
+        plt.ylabel('Retention Accuracy')
+        plt.title('Hardening Sweep Pareto')
+        plt.grid(True, alpha=0.3)
+        pareto_path = 'hardening_sweep_pareto.png'
+        plt.savefig(pareto_path, dpi=150, bbox_inches='tight')
+
+        # Determine best configurations
+        baseline_key = 'r0.0_t0.7'
+        baseline_initial = summary_json.get(baseline_key, {}).get('initial_mean', 0.0)
+        best_ret_key = max(summary_json.items(), key=lambda x: x[1]['retention_mean'])[0]
+        constrained_candidates = [item for item in summary_json.items()
+                                   if item[1]['initial_mean'] >= baseline_initial - 0.02]
+        best_ret_cons_key = max(constrained_candidates, key=lambda x: x[1]['retention_mean'])[0] if constrained_candidates else best_ret_key
+        best_stab_key = max(summary_json.items(), key=lambda x: x[1]['stability_mean'])[0]
+
+        def key_to_rt(k):
+            parts = k[1:].split('_t') if k.startswith('r') else [0,0]
+            return float(parts[0]), float(parts[1])
+
+        print("Top 3 by retention:")
+        for k, v in sorted(summary_json.items(), key=lambda x: x[1]['retention_mean'], reverse=True)[:3]:
+            r, t = v['hardening_rate'], v['hardening_threshold']
+            print(f"  rate={r}, thr={t}: retention={v['retention_mean']:.3f}")
+        print("Top 3 by retention+stability:")
+        for k, v in sorted(summary_json.items(), key=lambda x: (x[1]['retention_mean']+x[1]['stability_mean']), reverse=True)[:3]:
+            r, t = v['hardening_rate'], v['hardening_threshold']
+            print(f"  rate={r}, thr={t}: ret={v['retention_mean']:.3f}, stab={v['stability_mean']:.3f}")
+
+        br, bt = key_to_rt(best_ret_key)
+        brc, btc = key_to_rt(best_ret_cons_key)
+        bs, bt2 = key_to_rt(best_stab_key)
+        print(f"Best retention: rate={br}, thr={bt} (ret={summary_json[best_ret_key]['retention_mean']:.3f})")
+        print(f"Best retention (constrained): rate={brc}, thr={btc} (ret={summary_json[best_ret_cons_key]['retention_mean']:.3f})")
+        print(f"Best stability: rate={bs}, thr={bt2} (stab={summary_json[best_stab_key]['stability_mean']:.3f})")
+
+        self.results['hardening_sweep'] = {
+            'csv': csv_path,
+            'json': json_path,
+            'heatmap': heatmap_path,
+            'pareto': pareto_path
+        }
+
+        print("✓ Hardening sweep complete")
+
     def run_all_tests(self):
         """Run all test suites."""
         print("="*60)
@@ -1397,16 +1584,35 @@ class TestSuite:
 # ==================== MAIN EXECUTION ====================
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--sweep-hardening', action='store_true')
+    parser.add_argument('--epochs-per-phase', type=int, default=25)
+    parser.add_argument('--rates', type=str, default="0.0,0.03,0.05,0.1,0.2")
+    parser.add_argument('--thresholds', type=str, default="0.6,0.7,0.8")
+    parser.add_argument('--seeds', type=str, default="0,1,2")
+    args = parser.parse_args()
+
     test_suite = TestSuite()
-    results = test_suite.run_all_tests()
 
-    print("\n" + "="*60)
-    print("TEST SUITE COMPLETE")
-    print("="*60)
+    if args.sweep_hardening:
+        rates = [float(x) for x in args.rates.split(',') if x]
+        thresholds = [float(x) for x in args.thresholds.split(',') if x]
+        seeds = [int(x) for x in args.seeds.split(',') if x]
+        test_suite.run_hardening_sweep(rates=rates, thresholds=thresholds,
+                                       seeds=seeds, epochs_per_phase=args.epochs_per_phase)
+        test_suite.save_results_json()
+    else:
+        results = test_suite.run_all_tests()
 
-    total_passed = sum(r.get('passed', 0) for r in results.values() if isinstance(r, dict))
-    total_failed = sum(r.get('failed', 0) for r in results.values() if isinstance(r, dict))
+        print("\n" + "="*60)
+        print("TEST SUITE COMPLETE")
+        print("="*60)
 
-    print(f"\nUnit Tests: {total_passed} passed, {total_failed} failed")
-    print("\nPlease check 'htm_confidence_results.png' for visualizations")
-    print("Raw data available in 'htm_test_results.json'")
+        total_passed = sum(r.get('passed', 0) for r in results.values() if isinstance(r, dict))
+        total_failed = sum(r.get('failed', 0) for r in results.values() if isinstance(r, dict))
+
+        print(f"\nUnit Tests: {total_passed} passed, {total_failed} failed")
+        print("\nPlease check 'htm_confidence_results.png' for visualizations")
+        print("Raw data available in 'htm_test_results.json'")
