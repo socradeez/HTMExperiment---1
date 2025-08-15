@@ -1114,7 +1114,7 @@ class TestSuite:
         encoder = ScalarEncoder(min_val=0, max_val=10, n_bits=100)
         s1, s2 = [1,2,3,4,5], [6,7,8,9,10]
 
-        # Train on S1
+        # Pre-train on S1 so it is familiar before logging
         for _ in range(20):
             network.reset_sequence()
             for v in s1:
@@ -1125,9 +1125,9 @@ class TestSuite:
         def run(seq, reps):
             for _ in range(reps):
                 network.reset_sequence()
-                for v in seq:
+                for t, v in enumerate(seq):
                     r = network.compute(encoder.encode(v))
-                    if r['system_confidence'] is not None:
+                    if t > 0 and r['system_confidence'] is not None:
                         history.append(r['system_confidence'])
 
         run(s1, 5)  # familiar
