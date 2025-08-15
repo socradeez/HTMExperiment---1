@@ -595,6 +595,76 @@ class TestSuite:
                                           tm_params=tm_params, sp_params=sp_params)
         return baseline, confidence
 
+    def test_sequence_length_scaling(self, lengths=None, seeds=None):
+        """
+        Train on a single sequence A of varying length L, measure final accuracy on A,
+        then learn a new sequence B (no overlap) and measure retention on A.
+        Report mean across seeds.
+        """
+        print("\n--- Sequence Length Scaling Study ---")
+        import numpy as np
+
+        lengths = lengths or [5, 10, 20, 40, 60, 80]
+        seeds = seeds or [0, 1, 2]
+
+        encoder = ScalarEncoder(min_val=0, max_val=100, n_bits=100)
+
+        results = {
+            "lengths": lengths,
+            "baseline_acc_mean": [],
+            "confidence_acc_mean": [],
+            "baseline_ret_mean": [],
+            "confidence_ret_mean": [],
+        }
+
+        for L in lengths:
+            b_acc, c_acc, b_ret, c_ret = [], [], [], []
+
+            for s in seeds:
+                # Build baseline/confidence networks with selective TM params
+                base, conf = self._build_networks(s)
+
+                # Build sequences (no overlap): A at offset 10, B at offset 40
+                seqA = list(range(10, 10 + L))
+                seqB = list(range(40, 40 + L))
+
+                def train_on(net, seq, epochs):
+                    for _ in range(epochs):
+                        net.reset_sequence()
+                        for v in seq:
+                            net.compute(encoder.encode(v))
+
+                def eval_on(net, seq):
+                    net.reset_sequence()
+                    accs = []
+                    for v in seq:
+                        r = net.compute(encoder.encode(v), learn=False)
+                        accs.append(1.0 - r['anomaly_score'])
+                    return float(np.mean(accs))
+
+                # epochs scale lightly with L to keep runtime controlled
+                epochs = max(10, L // 5)
+
+                # Train both nets on A and evaluate
+                train_on(base, seqA, epochs)
+                train_on(conf, seqA, epochs)
+                b_acc.append(eval_on(base, seqA))
+                c_acc.append(eval_on(conf, seqA))
+
+                # Learn B, then evaluate retention on A (no learning)
+                train_on(base, seqB, epochs)
+                train_on(conf, seqB, epochs)
+                b_ret.append(eval_on(base, seqA))
+                c_ret.append(eval_on(conf, seqA))
+
+            results["baseline_acc_mean"].append(float(np.mean(b_acc)))
+            results["confidence_acc_mean"].append(float(np.mean(c_acc)))
+            results["baseline_ret_mean"].append(float(np.mean(b_ret)))
+            results["confidence_ret_mean"].append(float(np.mean(c_ret)))
+
+        self.results["scaling_study"] = results
+        print("✓ Scaling study complete:", results)
+
     def run_all_tests(self):
         """Run all test suites."""
         print("="*60)
@@ -610,6 +680,7 @@ class TestSuite:
         self.test_sequence_learning_comparison()
         self.test_continual_learning()
         self.test_noise_robustness()
+        self.test_sequence_length_scaling()
 
         # Generate visualizations
         self.generate_charts()
@@ -1196,6 +1267,30 @@ class TestSuite:
         plt.tight_layout()
         plt.savefig('htm_confidence_results.png', dpi=150, bbox_inches='tight')
         print("✓ Charts saved to 'htm_confidence_results.png'")
+
+        if 'scaling_study' in self.results:
+            data = self.results['scaling_study']
+            fig2, axs = plt.subplots(1, 2, figsize=(12, 5))
+
+            axs[0].plot(data['lengths'], data['baseline_acc_mean'], 'o-', label='Baseline')
+            axs[0].plot(data['lengths'], data['confidence_acc_mean'], 'o-', label='Confidence')
+            axs[0].set_xlabel('Sequence Length')
+            axs[0].set_ylabel('Accuracy')
+            axs[0].set_title('Accuracy vs Length')
+            axs[0].grid(True, alpha=0.3)
+            axs[0].legend()
+
+            axs[1].plot(data['lengths'], data['baseline_ret_mean'], 'o-', label='Baseline')
+            axs[1].plot(data['lengths'], data['confidence_ret_mean'], 'o-', label='Confidence')
+            axs[1].set_xlabel('Sequence Length')
+            axs[1].set_ylabel('Retention')
+            axs[1].set_title('Retention vs Length')
+            axs[1].grid(True, alpha=0.3)
+            axs[1].legend()
+
+            plt.tight_layout()
+            plt.savefig('/mnt/data/htm_scaling.png', dpi=150, bbox_inches='tight')
+            print("✓ Scaling chart saved to '/mnt/data/htm_scaling.png'")
 
         self.save_results_json()
 
