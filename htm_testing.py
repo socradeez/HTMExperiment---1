@@ -341,7 +341,7 @@ class CellConfidence:
 class ConfidenceModulatedTM(TemporalMemory):
     """Temporal Memory with confidence-based learning rate modulation."""
 
-    def __init__(self, 
+    def __init__(self,
                  confidence_window=100,
                  base_learning_rate=0.1,
                  exploration_bonus=2.0,
@@ -368,6 +368,13 @@ class ConfidenceModulatedTM(TemporalMemory):
         self.hardening_rate = getattr(self, 'hardening_rate', 0.03)
         self.hardening_threshold = getattr(self, 'hardening_threshold', 0.7)
 
+        # Instrumentation counters
+        self._hardening_updates = 0
+        self._hardness_sum = 0.0
+        self._hardness_count = 0
+        self._conf_over_thr_steps = 0
+        self._total_steps = 0
+
         # Metrics
         self.timestep = 0
         self.current_system_confidence = 0.5
@@ -385,6 +392,9 @@ class ConfidenceModulatedTM(TemporalMemory):
         # Calculate confidence metrics AFTER computing new state
         if self.timestep > 0:  # Skip first timestep since no predictions yet
             self._update_confidence_metrics(active_columns, prev_predictive)
+            self._total_steps += 1
+            if self.current_system_confidence >= self.hardening_threshold:
+                self._conf_over_thr_steps += 1
 
         # Additional confidence-modulated learning adjustments (on top of base learning)
         if learn and self.timestep > 0:
@@ -440,35 +450,76 @@ class ConfidenceModulatedTM(TemporalMemory):
             cell_conf = self.current_cell_confidences.get(cell_id, 0.5)
 
             if self.current_system_confidence < self.confidence_threshold:
-                # exploration
                 learning_rate = self.base_learning_rate * self.exploration_bonus
             else:
-                # exploitation: slow down on confident cells
                 learning_rate = self.base_learning_rate * (1.0 - cell_conf * 0.5)
 
             for seg_idx, segment in enumerate(self.segments.get(cell_id, [])):
                 n_active = self._count_active_synapses(segment, self.active_cells)
                 if n_active >= self.learning_threshold:
-                    self._adapt_segment_with_hardening(cell_id, seg_idx, segment, self.active_cells, learning_rate)
+                    self._adapt_segment_with_hardening(cell_id, seg_idx, segment,
+                                                      self.active_cells, learning_rate, positive=True)
 
-    def _adapt_segment_with_hardening(self, cell_id, seg_idx, segment, active_cells, learning_rate):
-        """Update synapses with 'hardening' so mature synapses resist change."""
+    def _adapt_segment_with_hardening(self, cell_id, seg_idx, segment, active_cells,
+                                      learning_rate, positive=True):
+        """Update synapses with graded hardening."""
         for i, (target_cell, perm) in enumerate(list(segment['synapses'])):
-            hardness = self.synapse_hardness[cell_id].get((seg_idx, i), 0.0) if hasattr(self, 'synapse_hardness') else 0.0
+            hardness = self.synapse_hardness[cell_id].get((seg_idx, i), 0.0)
             effective_rate = learning_rate * (1.0 - hardness)
 
             if target_cell in active_cells:
-                new_perm = perm + effective_rate
-                # If system is confident, increase hardness
-                if getattr(self, 'hardening_threshold', 0.8) is not None:
-                    if self.current_system_confidence > self.hardening_threshold:
-                        new_hardness = min(1.0, hardness + getattr(self, 'hardening_rate', 0.03))
-                        self.synapse_hardness[cell_id][(seg_idx, i)] = new_hardness
+                if positive:
+                    new_perm = perm + effective_rate
+                else:
+                    new_perm = perm - effective_rate
             else:
-                # weaken less aggressively
-                new_perm = perm - 0.1 * effective_rate
+                if positive:
+                    new_perm = perm - 0.1 * effective_rate
+                else:
+                    new_perm = perm - self.permanence_decrement
+
+            surplus = max(0.0, self.current_system_confidence - self.hardening_threshold)
+            if surplus > 0.0:
+                hardness = min(1.0, hardness + self.hardening_rate * surplus)
+            else:
+                hardness = max(0.0, hardness - 0.5 * self.hardening_rate)
+            self.synapse_hardness[cell_id][(seg_idx, i)] = hardness
+            self._hardening_updates += 1
+            self._hardness_sum += hardness
+            self._hardness_count += 1
 
             segment['synapses'][i] = (target_cell, float(np.clip(new_perm, 0.0, 1.0)))
+
+    def _grow_segment(self, cell_id, source_cells):
+        """Create new segment with owner metadata."""
+        if len(self.segments.get(cell_id, [])) >= self.max_segments_per_cell:
+            return
+        if isinstance(source_cells, set):
+            source_cells = list(source_cells)
+        else:
+            source_cells = list(source_cells)
+        sample_size = min(len(source_cells), self.max_synapses_per_segment)
+        if sample_size < self.learning_threshold:
+            return
+        sampled_cells = np.random.choice(source_cells, sample_size, replace=False)
+        seg_idx = len(self.segments.get(cell_id, []))
+        new_segment = {
+            'synapses': [(int(cell), float(self.initial_permanence)) for cell in sampled_cells],
+            'owner': cell_id,
+            'seg_idx': seg_idx
+        }
+        self.segments.setdefault(cell_id, []).append(new_segment)
+
+    def _adapt_segment(self, segment, active_cells, permanence_inc):
+        """Override base adaptation to include hardening."""
+        owner = segment.get('owner')
+        seg_idx = segment.get('seg_idx')
+        if owner is None or seg_idx is None:
+            return super()._adapt_segment(segment, active_cells, permanence_inc)
+        positive = permanence_inc >= 0
+        learning_rate = abs(permanence_inc)
+        self._adapt_segment_with_hardening(owner, seg_idx, segment, active_cells,
+                                          learning_rate, positive=positive)
 
 
 class ConfidenceHTMNetwork:
@@ -753,15 +804,17 @@ class TestSuite:
         for rate in rates:
             for thresh in thresholds:
                 key = f"r{rate}_t{thresh}"
-                summary[key] = {"initial": [], "retention": [], "stability": []}
+                summary[key] = {"initial": [], "retention": [], "stability": [],
+                                 "mean_conf": [], "frac_conf": [],
+                                 "mean_hard": [], "updates": []}
                 for seed in seeds:
                     tm_params = {
                         'cells_per_column': 8,
                         'activation_threshold': 10,
                         'learning_threshold': 8,
                         'initial_permanence': 0.5,
-                        'permanence_increment': 0.1,
-                        'permanence_decrement': 0.01,
+                        'permanence_increment': 0.02,
+                        'permanence_decrement': 0.005,
                         'max_synapses_per_segment': 16,
                         'seed': seed,
                         'hardening_rate': rate,
@@ -800,24 +853,39 @@ class TestSuite:
                         stability.append(len(b0 & b1) / (len(b0) or 1))
                     stab = float(np.mean(stability)) if stability else 0.0
 
+                    mean_conf = float(np.mean(net.tm.system_confidence)) if net.tm.system_confidence else 0.0
+                    frac_conf = net.tm._conf_over_thr_steps / max(1, net.tm._total_steps)
+                    mean_hard = net.tm._hardness_sum / max(1, net.tm._hardness_count)
+                    updates = net.tm._hardening_updates
+
                     csv_rows.append({
                         'hardening_rate': rate,
                         'hardening_threshold': thresh,
                         'seed': seed,
                         'initial_accuracy': initial,
                         'retention_accuracy': retention,
-                        'representation_stability': stab
+                        'representation_stability': stab,
+                        'mean_conf': mean_conf,
+                        'frac_conf_ge_thr': frac_conf,
+                        'mean_hardness': mean_hard,
+                        'hardening_updates': updates
                     })
 
                     summary[key]['initial'].append(initial)
                     summary[key]['retention'].append(retention)
                     summary[key]['stability'].append(stab)
+                    summary[key]['mean_conf'].append(mean_conf)
+                    summary[key]['frac_conf'].append(frac_conf)
+                    summary[key]['mean_hard'].append(mean_hard)
+                    summary[key]['updates'].append(updates)
 
         csv_path = 'hardening_sweep.csv'
         with open(csv_path, 'w', newline='') as f:
             writer = csv.DictWriter(f, fieldnames=['hardening_rate', 'hardening_threshold', 'seed',
                                                    'initial_accuracy', 'retention_accuracy',
-                                                   'representation_stability'])
+                                                   'representation_stability', 'mean_conf',
+                                                   'frac_conf_ge_thr', 'mean_hardness',
+                                                   'hardening_updates'])
             writer.writeheader()
             for row in csv_rows:
                 writer.writerow(row)
@@ -835,7 +903,15 @@ class TestSuite:
                     'retention_mean': float(np.mean(data['retention'])) if data['retention'] else 0.0,
                     'retention_std': float(np.std(data['retention'])) if data['retention'] else 0.0,
                     'stability_mean': float(np.mean(data['stability'])) if data['stability'] else 0.0,
-                    'stability_std': float(np.std(data['stability'])) if data['stability'] else 0.0
+                    'stability_std': float(np.std(data['stability'])) if data['stability'] else 0.0,
+                    'mean_conf_mean': float(np.mean(data['mean_conf'])) if data['mean_conf'] else 0.0,
+                    'mean_conf_std': float(np.std(data['mean_conf'])) if data['mean_conf'] else 0.0,
+                    'frac_conf_ge_thr_mean': float(np.mean(data['frac_conf'])) if data['frac_conf'] else 0.0,
+                    'frac_conf_ge_thr_std': float(np.std(data['frac_conf'])) if data['frac_conf'] else 0.0,
+                    'mean_hardness_mean': float(np.mean(data['mean_hard'])) if data['mean_hard'] else 0.0,
+                    'mean_hardness_std': float(np.std(data['mean_hard'])) if data['mean_hard'] else 0.0,
+                    'hardening_updates_mean': float(np.mean(data['updates'])) if data['updates'] else 0.0,
+                    'hardening_updates_std': float(np.std(data['updates'])) if data['updates'] else 0.0
                 }
 
         json_path = 'hardening_sweep_summary.json'
