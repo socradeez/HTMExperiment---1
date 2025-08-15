@@ -383,11 +383,12 @@ class ConfidenceModulatedTM(TemporalMemory):
     def compute(self, active_columns, learn=True):
         """Enhanced compute with confidence tracking."""
 
+        prev_active = self.active_cells.copy()
         # Track previous predictions for confidence calculation
         prev_predictive = self.predictive_cells.copy()
 
-        # Run standard temporal memory computation WITH LEARNING
-        active_cells, predictive_cells = super().compute(active_columns, learn=learn)
+        # Run standard temporal memory computation WITHOUT learning
+        active_cells, predictive_cells = super().compute(active_columns, learn=False)
 
         # Calculate confidence metrics AFTER computing new state
         if self.timestep > 0:  # Skip first timestep since no predictions yet
@@ -396,10 +397,35 @@ class ConfidenceModulatedTM(TemporalMemory):
             if self.current_system_confidence >= self.hardening_threshold:
                 self._conf_over_thr_steps += 1
 
-        # Additional confidence-modulated learning adjustments (on top of base learning)
+        # --- SINGLE, CONSOLIDATED LEARNING PHASE ---
         if learn and self.timestep > 0:
-            self._apply_confidence_modulation()
-            self._confidence_modulated_learning()
+            # Step 1: Determine the learning rate based on confidence
+            if self.current_system_confidence < self.confidence_threshold:
+                learning_rate = self.base_learning_rate * self.exploration_bonus
+            else:
+                learning_rate = self.base_learning_rate
+
+            # Step 2: Adapt synapses for all winner cells from this timestep
+            for cell_id in self.winner_cells:
+                best_segment = None
+                best_score = -1
+                for seg_idx, segment in enumerate(self.segments.get(cell_id, [])):
+                    score = self._count_active_synapses(segment, prev_active)
+                    if score >= self.learning_threshold and score > best_score:
+                        best_segment = (seg_idx, segment)
+                        best_score = score
+
+                if best_segment is not None:
+                    seg_idx, segment = best_segment
+                    self._adapt_segment_with_hardening(
+                        cell_id,
+                        seg_idx,
+                        segment,
+                        prev_active,
+                        learning_rate
+                    )
+                elif len(prev_active) >= self.learning_threshold:
+                    self._grow_segment(cell_id, prev_active)
 
         self.timestep += 1
         return active_cells, predictive_cells
@@ -524,17 +550,6 @@ class ConfidenceModulatedTM(TemporalMemory):
             'seg_idx': seg_idx
         }
         self.segments.setdefault(cell_id, []).append(new_segment)
-
-    def _adapt_segment(self, segment, active_cells, permanence_inc):
-        """Override base adaptation to include hardening."""
-        owner = segment.get('owner')
-        seg_idx = segment.get('seg_idx')
-        if owner is None or seg_idx is None:
-            return super()._adapt_segment(segment, active_cells, permanence_inc)
-        positive = permanence_inc >= 0
-        learning_rate = abs(permanence_inc)
-        self._adapt_segment_with_hardening(owner, seg_idx, segment, active_cells,
-                                          learning_rate, positive=positive)
 
 
 class ConfidenceHTMNetwork:
