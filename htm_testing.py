@@ -2,8 +2,13 @@
 import numpy as np
 from collections import defaultdict, deque
 from typing import Set, List, Tuple, Dict
-import matplotlib
-matplotlib.use("Agg")  # ensure headless
+from htm.plotting import (
+    set_matplotlib_headless,
+    plot_main_dashboard,
+    plot_scaling,
+    plot_hardening_heatmaps,
+)
+set_matplotlib_headless()
 import matplotlib.pyplot as plt
 import json
 import csv
@@ -218,28 +223,8 @@ class TestSuite:
         # Heatmaps
         retention_grid = np.array([[summary_json[f"r{r}_t{t}"]['retention_mean'] for r in rates] for t in thresholds])
         stability_grid = np.array([[summary_json[f"r{r}_t{t}"]['stability_mean'] for r in rates] for t in thresholds])
-        fig, axs = plt.subplots(1, 2, figsize=(10, 4))
-        im0 = axs[0].imshow(retention_grid, origin='lower', aspect='auto', vmin=0, vmax=1)
-        axs[0].set_xticks(range(len(rates)))
-        axs[0].set_xticklabels(rates)
-        axs[0].set_yticks(range(len(thresholds)))
-        axs[0].set_yticklabels(thresholds)
-        axs[0].set_xlabel('Hardening Rate')
-        axs[0].set_ylabel('Hardening Threshold')
-        axs[0].set_title('Retention Accuracy')
-        fig.colorbar(im0, ax=axs[0])
-        im1 = axs[1].imshow(stability_grid, origin='lower', aspect='auto', vmin=0, vmax=1)
-        axs[1].set_xticks(range(len(rates)))
-        axs[1].set_xticklabels(rates)
-        axs[1].set_yticks(range(len(thresholds)))
-        axs[1].set_yticklabels(thresholds)
-        axs[1].set_xlabel('Hardening Rate')
-        axs[1].set_ylabel('Hardening Threshold')
-        axs[1].set_title('Representation Stability')
-        fig.colorbar(im1, ax=axs[1])
-        plt.tight_layout()
         heatmap_path = 'hardening_sweep_heatmap.png'
-        plt.savefig(heatmap_path, dpi=150, bbox_inches='tight')
+        plot_hardening_heatmaps(retention_grid, stability_grid, rates, thresholds, heatmap_path)
 
         # Pareto scatter
         plt.figure(figsize=(6, 5))
@@ -611,185 +596,11 @@ class TestSuite:
     def generate_charts(self):
         """Generate visualization charts."""
         print("\n--- Generating Visualizations ---")
-
-        fig, axes = plt.subplots(2, 3, figsize=(15, 10))
-        fig.suptitle('HTM Confidence-Based Learning: Baseline vs Enhanced', fontsize=16)
-
-        # 1. Sequence Learning Comparison
-        ax = axes[0, 0]
-        if 'sequence_comparison' in self.results:
-            data = self.results['sequence_comparison']
-            epochs = range(len(data['baseline_accuracy']))
-            ax.plot(epochs, data['baseline_accuracy'], label='Baseline HTM', linewidth=2)
-            ax.plot(epochs, data['confidence_accuracy'], label='Confidence HTM', linewidth=2)
-            ax.set_xlabel('Training Epoch')
-            ax.set_ylabel('Prediction Accuracy')
-            ax.set_title('Sequence Learning Speed')
-            ax.legend()
-            ax.grid(True, alpha=0.3)
-
-        # 2. Continual Learning
-        ax = axes[0, 1]
-        if 'continual_learning' in self.results:
-            data = self.results['continual_learning']
-
-            phases = ['Seq A\n(Initial)', 'Seq B\n(New)', 'Seq A\n(Recall)']
-            baseline_vals = [
-                data['baseline']['seq_a'][-1] if data['baseline']['seq_a'] else 0,
-                data['baseline']['seq_b_during'][-1] if data['baseline']['seq_b_during'] else 0,
-                data['baseline']['seq_a_after'][0] if data['baseline']['seq_a_after'] else 0
-            ]
-            confidence_vals = [
-                data['confidence']['seq_a'][-1] if data['confidence']['seq_a'] else 0,
-                data['confidence']['seq_b_during'][-1] if data['confidence']['seq_b_during'] else 0,
-                data['confidence']['seq_a_after'][0] if data['confidence']['seq_a_after'] else 0
-            ]
-
-            x = np.arange(len(phases))
-            width = 0.35
-            ax.bar(x - width/2, baseline_vals, width, label='Baseline', alpha=0.7)
-            ax.bar(x + width/2, confidence_vals, width, label='Confidence', alpha=0.7)
-            ax.set_xlabel('Learning Phase')
-            ax.set_ylabel('Accuracy')
-            ax.set_title('Catastrophic Forgetting Resistance')
-            ax.set_xticks(x)
-            ax.set_xticklabels(phases)
-            ax.legend()
-            ax.grid(True, alpha=0.3)
-
-        # 3. Noise Robustness
-        ax = axes[0, 2]
-        if 'noise_robustness' in self.results:
-            data = self.results['noise_robustness']
-            noise_pct = [n * 100 for n in data['noise_levels']]
-            ax.plot(noise_pct, data['baseline'], 'o-', label='Baseline HTM', linewidth=2)
-            ax.plot(noise_pct, data['confidence'], 'o-', label='Confidence HTM', linewidth=2)
-            ax.set_xlabel('Noise Level (%)')
-            ax.set_ylabel('Prediction Accuracy')
-            ax.set_title('Noise Robustness')
-            ax.legend()
-            ax.grid(True, alpha=0.3)
-
-        # 4. System Confidence Evolution
-        ax = axes[1, 0]
-        network = ConfidenceHTMNetwork(input_size=100, use_confidence=True)
-        encoder = ScalarEncoder(min_val=0, max_val=10, n_bits=100)
-        s1, s2 = [1,2,3,4,5], [6,7,8,9,10]
-
-        # Pre-train on S1 so it is familiar before logging
-        for _ in range(20):
-            network.reset_sequence()
-            for v in s1:
-                network.compute(encoder.encode(v))
-
-        history = []
-
-        def run(seq, reps):
-            for _ in range(reps):
-                network.reset_sequence()
-                for t, v in enumerate(seq):
-                    r = network.compute(encoder.encode(v))
-                    if t > 0 and r['system_confidence'] is not None:
-                        history.append(r['system_confidence'])
-
-        run(s1, 5)  # familiar
-        run(s2, 5)  # novel
-        run(s1, 5)  # familiar again
-
-        ax.plot(history, linewidth=2)
-        ax.axhline(y=0.7, linestyle='--', alpha=0.5, label='Confidence Threshold')
-        ax.set_title('Confidence: Familiar → Novel → Familiar')
-
-        # 5. Learning Rate Modulation
-        ax = axes[1, 1]
-        confidence_levels = np.linspace(0, 1, 100)
-        exploration_rate = []
-        exploitation_rate = []
-
-        for conf in confidence_levels:
-            if conf < 0.7:
-                exploration_rate.append(0.1 * 2.0)
-                exploitation_rate.append(0.1)
-            else:
-                exploration_rate.append(0.1)
-                exploitation_rate.append(0.1 * (1.0 - conf * 0.5))
-
-        ax.plot(confidence_levels, exploration_rate, label='Exploration Mode', linewidth=2)
-        ax.plot(confidence_levels, exploitation_rate, label='Exploitation Mode', linewidth=2)
-        ax.axvline(x=0.7, linestyle='--', alpha=0.5, label='Mode Switch')
-        ax.set_xlabel('System Confidence')
-        ax.set_ylabel('Learning Rate')
-        ax.set_title('Adaptive Learning Rate')
-        ax.legend()
-        ax.grid(True, alpha=0.3)
-
-        # 6. Summary Statistics
-        ax = axes[1, 2]
-        ax.axis('off')
-
-        summary_text = "Performance Summary\n" + "="*30 + "\n\n"
-
-        if 'sequence_comparison' in self.results:
-            baseline_final = self.results['sequence_comparison']['baseline_accuracy'][-1]
-            confidence_final = self.results['sequence_comparison']['confidence_accuracy'][-1]
-            improvement = ((confidence_final - baseline_final) / baseline_final * 100) if baseline_final > 0 else 0
-            summary_text += f"Sequence Learning:\n"
-            summary_text += f"  Baseline: {baseline_final:.3f}\n"
-            summary_text += f"  Confidence: {confidence_final:.3f}\n"
-            summary_text += f"  Improvement: {improvement:+.1f}%\n\n"
-
-        if 'continual_learning' in self.results:
-            baseline_retention = self.results['continual_learning']['baseline']['seq_a_after'][0]
-            confidence_retention = self.results['continual_learning']['confidence']['seq_a_after'][0]
-            summary_text += f"Memory Retention:\n"
-            summary_text += f"  Baseline: {baseline_retention:.3f}\n"
-            summary_text += f"  Confidence: {confidence_retention:.3f}\n\n"
-
-        if 'noise_robustness' in self.results:
-            baseline_noise = self.results['noise_robustness']['baseline'][-1]
-            confidence_noise = self.results['noise_robustness']['confidence'][-1]
-            summary_text += f"Noise Resistance (20%):\n"
-            summary_text += f"  Baseline: {baseline_noise:.3f}\n"
-            summary_text += f"  Confidence: {confidence_noise:.3f}\n"
-
-        if 'branching_context' in self.results:
-            bc = self.results['branching_context']
-            summary_text += "\nBranching Context (branch/post):\n"
-            summary_text += f"  Baseline: {bc['baseline']['branch_acc_mean']:.3f}/{bc['baseline']['post_acc_mean']:.3f}\n"
-            summary_text += f"  Confidence: {bc['confidence']['branch_acc_mean']:.3f}/{bc['confidence']['post_acc_mean']:.3f}\n"
-            print("Branching context summary:", bc)
-
-        ax.text(0.1, 0.5, summary_text, fontsize=10, family='monospace',
-                verticalalignment='center', transform=ax.transAxes)
-
-        plt.tight_layout()
-        plt.savefig('htm_confidence_results.png', dpi=150, bbox_inches='tight')
+        plot_main_dashboard(self.results, 'htm_confidence_results.png')
         print("✓ Charts saved to 'htm_confidence_results.png'")
-
         if 'scaling_study' in self.results:
-            data = self.results['scaling_study']
-            fig2, axs = plt.subplots(1, 2, figsize=(12, 5))
-
-            axs[0].plot(data['lengths'], data['baseline_acc_mean'], 'o-', label='Baseline')
-            axs[0].plot(data['lengths'], data['confidence_acc_mean'], 'o-', label='Confidence')
-            axs[0].set_xlabel('Sequence Length')
-            axs[0].set_ylabel('Accuracy')
-            axs[0].set_title('Accuracy vs Length')
-            axs[0].grid(True, alpha=0.3)
-            axs[0].legend()
-
-            axs[1].plot(data['lengths'], data['baseline_ret_mean'], 'o-', label='Baseline')
-            axs[1].plot(data['lengths'], data['confidence_ret_mean'], 'o-', label='Confidence')
-            axs[1].set_xlabel('Sequence Length')
-            axs[1].set_ylabel('Retention')
-            axs[1].set_title('Retention vs Length')
-            axs[1].grid(True, alpha=0.3)
-            axs[1].legend()
-
-            plt.tight_layout()
-            plt.savefig('/mnt/data/htm_scaling.png', dpi=150, bbox_inches='tight')
+            plot_scaling(self.results['scaling_study'], '/mnt/data/htm_scaling.png')
             print("✓ Scaling chart saved to '/mnt/data/htm_scaling.png'")
-
         self.save_results_json()
 
     def save_results_json(self):
