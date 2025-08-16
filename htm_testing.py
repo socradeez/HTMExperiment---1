@@ -383,49 +383,20 @@ class ConfidenceModulatedTM(TemporalMemory):
     def compute(self, active_columns, learn=True):
         """Enhanced compute with confidence tracking."""
 
-        prev_active = self.active_cells.copy()
-        # Track previous predictions for confidence calculation
         prev_predictive = self.predictive_cells.copy()
 
-        # Run standard temporal memory computation WITHOUT learning
-        active_cells, predictive_cells = super().compute(active_columns, learn=False)
+        # Run standard temporal memory computation with optional learning
+        active_cells, predictive_cells = super().compute(active_columns, learn=learn)
 
-        # Calculate confidence metrics AFTER computing new state
         if self.timestep > 0:  # Skip first timestep since no predictions yet
             self._update_confidence_metrics(active_columns, prev_predictive)
             self._total_steps += 1
             if self.current_system_confidence >= self.hardening_threshold:
                 self._conf_over_thr_steps += 1
 
-        # --- SINGLE, CONSOLIDATED LEARNING PHASE ---
         if learn and self.timestep > 0:
-            # Step 1: Determine the learning rate based on confidence
-            if self.current_system_confidence < self.confidence_threshold:
-                learning_rate = self.base_learning_rate * self.exploration_bonus
-            else:
-                learning_rate = self.base_learning_rate
-
-            # Step 2: Adapt synapses for all winner cells from this timestep
-            for cell_id in self.winner_cells:
-                best_segment = None
-                best_score = -1
-                for seg_idx, segment in enumerate(self.segments.get(cell_id, [])):
-                    score = self._count_active_synapses(segment, prev_active)
-                    if score >= self.learning_threshold and score > best_score:
-                        best_segment = (seg_idx, segment)
-                        best_score = score
-
-                if best_segment is not None:
-                    seg_idx, segment = best_segment
-                    self._adapt_segment_with_hardening(
-                        cell_id,
-                        seg_idx,
-                        segment,
-                        prev_active,
-                        learning_rate
-                    )
-                elif len(prev_active) >= self.learning_threshold:
-                    self._grow_segment(cell_id, prev_active)
+            self._apply_confidence_modulation()
+            self._confidence_modulated_learning()
 
         self.timestep += 1
         return active_cells, predictive_cells
