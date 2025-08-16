@@ -383,10 +383,11 @@ class ConfidenceModulatedTM(TemporalMemory):
     def compute(self, active_columns, learn=True):
         """Enhanced compute with confidence tracking."""
 
+        prev_active = self.active_cells.copy()
         prev_predictive = self.predictive_cells.copy()
 
-        # Run standard temporal memory computation with optional learning
-        active_cells, predictive_cells = super().compute(active_columns, learn=learn)
+        # Run base temporal memory computation without learning
+        active_cells, predictive_cells = super().compute(active_columns, learn=False)
 
         if self.timestep > 0:  # Skip first timestep since no predictions yet
             self._update_confidence_metrics(active_columns, prev_predictive)
@@ -396,7 +397,7 @@ class ConfidenceModulatedTM(TemporalMemory):
 
         if learn and self.timestep > 0:
             self._apply_confidence_modulation()
-            self._confidence_modulated_learning()
+            self._confidence_modulated_learning(prev_active)
 
         self.timestep += 1
         return active_cells, predictive_cells
@@ -441,7 +442,7 @@ class ConfidenceModulatedTM(TemporalMemory):
         # Refresh current cell confidences only for known cells
         self.current_cell_confidences = {cell: float(np.mean(hist)) for cell, hist in self.cell_confidence.items() if len(hist) > 0}
 
-    def _confidence_modulated_learning(self):
+    def _confidence_modulated_learning(self, prev_active):
         """Apply learning with confidence-based modulation on winner cells."""
         for cell_id in list(self.winner_cells):
             if self.current_system_confidence < self.confidence_threshold:
@@ -449,17 +450,35 @@ class ConfidenceModulatedTM(TemporalMemory):
             else:
                 learning_rate = self.base_learning_rate
 
+            best_segment = None
+            best_score = 0
             for seg_idx, segment in enumerate(self.segments.get(cell_id, [])):
-                n_active = self._count_active_synapses(segment, self.active_cells)
-                if n_active >= self.learning_threshold:
-                    self._adapt_segment_with_hardening(
-                        cell_id,
-                        seg_idx,
-                        segment,
-                        self.active_cells,
-                        learning_rate,
-                        positive=True,
-                    )
+                score = self._count_active_synapses(segment, prev_active)
+                if score >= self.learning_threshold and score > best_score:
+                    best_segment = (seg_idx, segment)
+                    best_score = score
+
+            if best_segment is not None:
+                self._adapt_segment_with_hardening(
+                    cell_id,
+                    best_segment[0],
+                    best_segment[1],
+                    prev_active,
+                    learning_rate,
+                    positive=True,
+                )
+            elif len(prev_active) >= self.learning_threshold:
+                self._grow_segment(cell_id, prev_active)
+
+    def _adapt_segment(self, segment, active_cells, permanence_inc=None, positive=True):
+        """Override to ensure all updates use hardening path."""
+        cell_id = segment.get('owner')
+        seg_idx = segment.get('seg_idx')
+        lr = permanence_inc if permanence_inc is not None else self.permanence_increment
+        if cell_id is not None and seg_idx is not None:
+            self._adapt_segment_with_hardening(cell_id, seg_idx, segment, active_cells, lr, positive=positive)
+        else:
+            super()._adapt_segment(segment, active_cells, permanence_inc)
 
     def _adapt_segment_with_hardening(self, cell_id, seg_idx, segment, active_cells,
                                       learning_rate, positive=True):
@@ -481,8 +500,8 @@ class ConfidenceModulatedTM(TemporalMemory):
                 effective_rate = learning_rate * (1.0 - hardness * 0.5)
                 new_perm = perm + effective_rate
             else:
-                # Decay strongly resisted by hardness
-                effective_decay = (0.1 * learning_rate) * (1.0 - protection_factor)
+                # Decay based on permanence_decrement and hardness
+                effective_decay = self.permanence_decrement * (1.0 - protection_factor)
                 new_perm = perm - effective_decay
 
             segment['synapses'][i] = (
@@ -497,8 +516,9 @@ class ConfidenceModulatedTM(TemporalMemory):
 
             self.synapse_hardness[cell_id][(seg_idx, i)] = new_hardness
 
-            # Instrumentation
-            self._hardening_updates += 1
+            # Instrumentation: count only gated updates
+            if is_hardening_active and target_cell in active_cells and hardness > 0:
+                self._hardening_updates += 1
             self._hardness_sum += new_hardness
             self._hardness_count += 1
 
@@ -641,7 +661,12 @@ class TestSuite:
             'max_synapses_per_segment': 16,
             'seed': seed
         }
-        sp_params = {'seed': seed}
+        sp_params = {
+            'column_count': 100,
+            'sparsity': 0.1,
+            'seed': seed,
+            'boost_strength': 0.0
+        }
         baseline = ConfidenceHTMNetwork(input_size=100, use_confidence=False,
                                         tm_params=tm_params, sp_params=sp_params)
         confidence = ConfidenceHTMNetwork(input_size=100, use_confidence=True,
@@ -814,14 +839,19 @@ class TestSuite:
                         'activation_threshold': 10,
                         'learning_threshold': 8,
                         'initial_permanence': 0.5,
-                        'permanence_increment': 0.1,
-                        'permanence_decrement': 0.01,
+                        'permanence_increment': 0.02,
+                        'permanence_decrement': 0.005,
                         'max_synapses_per_segment': 16,
                         'seed': seed,
                         'hardening_rate': rate,
                         'hardening_threshold': thresh
                     }
-                    sp_params = {'seed': seed}
+                    sp_params = {
+                        'column_count': 100,
+                        'sparsity': 0.1,
+                        'seed': seed,
+                        'boost_strength': 0.0
+                    }
                     net = ConfidenceHTMNetwork(input_size=100, use_confidence=True,
                                                tm_params=tm_params, sp_params=sp_params)
 
@@ -933,7 +963,8 @@ class TestSuite:
         retention_grid = np.array([[summary_json[f"r{r}_t{t}"]['retention_mean'] for r in rates] for t in thresholds])
         stability_grid = np.array([[summary_json[f"r{r}_t{t}"]['stability_mean'] for r in rates] for t in thresholds])
         fig, axs = plt.subplots(1, 2, figsize=(10, 4))
-        im0 = axs[0].imshow(retention_grid, origin='lower', aspect='auto', vmin=0, vmax=1)
+        im0 = axs[0].imshow(retention_grid, origin='lower', aspect='auto',
+                            vmin=retention_grid.min(), vmax=retention_grid.max())
         axs[0].set_xticks(range(len(rates)))
         axs[0].set_xticklabels(rates)
         axs[0].set_yticks(range(len(thresholds)))
@@ -942,7 +973,8 @@ class TestSuite:
         axs[0].set_ylabel('Hardening Threshold')
         axs[0].set_title('Retention Accuracy')
         fig.colorbar(im0, ax=axs[0])
-        im1 = axs[1].imshow(stability_grid, origin='lower', aspect='auto', vmin=0, vmax=1)
+        im1 = axs[1].imshow(stability_grid, origin='lower', aspect='auto',
+                            vmin=stability_grid.min(), vmax=stability_grid.max())
         axs[1].set_xticks(range(len(rates)))
         axs[1].set_xticklabels(rates)
         axs[1].set_yticks(range(len(thresholds)))
@@ -1526,7 +1558,11 @@ class TestSuite:
 
         # 4. System Confidence Evolution
         ax = axes[1, 0]
-        network = ConfidenceHTMNetwork(input_size=100, use_confidence=True)
+        network = ConfidenceHTMNetwork(
+            input_size=100,
+            use_confidence=True,
+            sp_params={'column_count': 100, 'sparsity': 0.1, 'seed': 0, 'boost_strength': 0.0}
+        )
         encoder = ScalarEncoder(min_val=0, max_val=10, n_bits=100)
         s1, s2 = [1,2,3,4,5], [6,7,8,9,10]
 
