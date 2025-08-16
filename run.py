@@ -8,6 +8,7 @@ from dataclasses import asdict
 
 from config import ModelConfig, RunConfig, json_dumps
 from metrics import MetricsCollector
+from metaplasticity import MetaParams
 from plotting import (
     plot_single_metric_figures,
     plot_dashboard,
@@ -241,11 +242,12 @@ if __name__ == "__main__":
         num_columns=2048,
         cells_per_column=10,
         k_active_columns=40,
-        synapses_per_column=32,
+        synapses_per_column=64,
         perm_connected=0.25,
         init_perm_mean=0.26,
         init_perm_sd=0.02,
         perm_inc=0.03,
+        meta=MetaParams(enabled=False),
         perm_dec=0.015,
         distal_synapses_per_segment=20,
         segment_activation_threshold=10,
