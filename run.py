@@ -4,6 +4,7 @@ import numpy as np
 from typing import Dict, List, Set
 from datetime import datetime
 from itertools import combinations
+from dataclasses import asdict
 
 from config import ModelConfig, RunConfig, json_dumps
 from metrics import MetricsCollector
@@ -49,9 +50,9 @@ def main(model_cfg: ModelConfig, run_cfg: RunConfig):
     run_name = run_cfg.run_name or "htm_np"
     outdir = make_run_dir(run_cfg.output_dir, run_name)
     with open(os.path.join(outdir, "config_model.json"), "w") as f:
-        f.write(json_dumps(model_cfg.__dict__))
+        f.write(json_dumps(asdict(model_cfg)))
     with open(os.path.join(outdir, "config_run.json"), "w") as f:
-        f.write(json_dumps(run_cfg.__dict__))
+        f.write(json_dumps(asdict(run_cfg)))
 
     sp = SpatialPooler.create(model_cfg, rng)
     tm = TemporalMemory.create(model_cfg, rng)
@@ -226,7 +227,11 @@ def main(model_cfg: ModelConfig, run_cfg: RunConfig):
                     f"{tok}: pred={row['predicted_cells']:.3f}, burst={row['bursting_columns']:.3f}, "
                     f"prec={row['precision']:.3f}, rec={row['recall']:.3f}"
                 )
-
+    if model_cfg.meta.enabled:
+        print(
+            f"Metaplasticity: rungs={model_cfg.meta.rungs}, "
+            f"decay_beta={model_cfg.meta.decay_beta}, decay_floor={model_cfg.meta.decay_floor}"
+        )
     print("Run complete. Outputs in:", outdir)
     return outdir
 

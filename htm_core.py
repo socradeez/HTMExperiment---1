@@ -3,6 +3,7 @@ import numpy as np
 from dataclasses import dataclass
 from typing import Dict, List, Tuple, Set, Optional
 from config import ModelConfig
+from metaplasticity import effective_dec, apply_gates
 
 def seeded_rng(seed: int) -> np.random.Generator:
     return np.random.default_rng(seed)
@@ -165,12 +166,23 @@ class TemporalMemory:
         bursting_cols = set(active_columns) - predicted_cols
 
         for cell_id, segs in active_segments.items():
+            col = cell_id // self.cfg.cells_per_column
+            entropy = sum(1 for c in predictive_prev if c // self.cfg.cells_per_column == col)
             for seg in segs:
                 if seg.presyn_cells.size == 0:
                     continue
                 is_prev = np.isin(seg.presyn_cells, list(active_cells_prev))
-                seg.permanences[is_prev] += self.cfg.perm_inc
-                seg.permanences[~is_prev] -= self.cfg.perm_dec
+                seg_active = seg.activation_count(active_cells_prev, self.cfg.perm_connected)
+                margin = seg_active - self.cfg.segment_activation_threshold
+                if self.cfg.meta.enabled:
+                    inc = np.full(is_prev.sum(), self.cfg.perm_inc, dtype=np.float32)
+                    inc = apply_gates(seg.permanences[is_prev], inc, margin, entropy, self.cfg.meta)
+                    dec = effective_dec(seg.permanences[~is_prev], self.cfg.perm_dec, self.cfg.meta)
+                    seg.permanences[is_prev] += inc
+                    seg.permanences[~is_prev] -= dec
+                else:
+                    seg.permanences[is_prev] += self.cfg.perm_inc
+                    seg.permanences[~is_prev] -= self.cfg.perm_dec
                 np.clip(seg.permanences, 0.0, 1.0, out=seg.permanences)
 
         for col in bursting_cols:
