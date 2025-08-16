@@ -48,6 +48,9 @@ class ConfidenceModulatedTM(TemporalMemory):
         self._hardness_decays = 0
         self._hardness_sum = 0.0
         self._hardness_count = 0
+        self._hardness_sum_all = 0.0
+        self._hardness_count_all = 0
+        self._mean_hardness_all = 0.0
         self._conf_over_thr_steps = 0
         self._total_steps = 0
         self._segments_missing_meta = 0
@@ -201,7 +204,9 @@ class ConfidenceModulatedTM(TemporalMemory):
             hardness = self.synapse_hardness[cell_id].get((seg_idx, i), 0.0)
 
             if conf >= self.hardening_threshold:
-                delta_h = self.hardening_rate * max(0.0, conf - self.hardening_threshold)
+                delta_h = self.hardening_rate * max(
+                    0.0, conf - self.hardening_threshold
+                )
             else:
                 delta_h = -0.5 * self.hardening_rate
                 if abs(delta_h) > 0:
@@ -210,9 +215,15 @@ class ConfidenceModulatedTM(TemporalMemory):
             new_hardness = float(np.clip(hardness + delta_h, 0.0, 1.0))
             if abs(new_hardness - hardness) > 1e-9:
                 self._hardening_updates += 1
+                if new_hardness > hardness:
+                    self._hardness_sum += new_hardness
+                    self._hardness_count += 1
             self.synapse_hardness[cell_id][(seg_idx, i)] = new_hardness
-            self._hardness_sum += new_hardness
-            self._hardness_count += 1
+            self._hardness_sum_all += new_hardness
+            self._hardness_count_all += 1
+            self._mean_hardness_all = self._hardness_sum_all / max(
+                1, self._hardness_count_all
+            )
 
             if target_cell in active_cells:
                 delta = base_rate * (1.0 - new_hardness)

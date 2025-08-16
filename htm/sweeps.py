@@ -120,11 +120,14 @@ def run_hardening_sweep(
                 print(
                     f"rate {rate} thr {thr} seed {seed}: mean_conf={mean_conf:.3f} frac_conf_ge_thr={frac_conf:.3f}"
                 )
-                mean_hard = net.tm._hardness_sum / max(1, net.tm._hardness_count)
+                mean_hard = net.tm._hardness_sum / max(
+                    1, net.tm._hardness_count
+                )
+                mean_hard_all = net.tm._mean_hardness_all
                 updates = net.tm._hardening_updates
                 decays = net.tm._hardness_decays
                 print(
-                    f"hardening: updates={updates}, mean_hardness={mean_hard:.4f}"
+                    f"hardening: updates={updates}, mean_hardness={mean_hard:.4f}, mean_hardness_all={mean_hard_all:.4f}"
                 )
                 print(
                     f"segments_missing_meta={net.tm._segments_missing_meta}"
@@ -141,6 +144,7 @@ def run_hardening_sweep(
                         "mean_conf": mean_conf,
                         "frac_conf_ge_thr": frac_conf,
                         "mean_hardness": mean_hard,
+                        "mean_hardness_all": mean_hard_all,
                         "hardening_updates": updates,
                         "hardness_decays": decays,
                         "seq_b_accuracy": seq_b_acc,
@@ -166,6 +170,7 @@ def run_hardening_sweep(
                 "mean_conf",
                 "frac_conf_ge_thr",
                 "mean_hardness",
+                "mean_hardness_all",
                 "hardening_updates",
                 "hardness_decays",
             ],
@@ -275,6 +280,7 @@ def quick_ab(seed: int = 0) -> None:
             for v in B:
                 net.compute(enc.encode(v))
         mean_hardness = net.tm._hardness_sum / max(1, net.tm._hardness_count)
+        mean_hardness_all = net.tm._mean_hardness_all
         print(
-            f"[AB] thr={thr} -> hardening_updates={net.tm._hardening_updates}, mean_hardness={mean_hardness:.4f}"
+            f"[AB] thr={thr} -> hardening_updates={net.tm._hardening_updates}, mean_hardness={mean_hardness:.4f}, mean_hardness_all={mean_hardness_all:.4f}"
         )
