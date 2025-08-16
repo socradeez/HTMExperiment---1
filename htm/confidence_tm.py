@@ -2,10 +2,13 @@
 
 from collections import defaultdict, deque
 from typing import Dict
+import logging
 
 import numpy as np
 
 from .tm import TemporalMemory
+
+log = logging.getLogger(__name__)
 
 
 class ConfidenceModulatedTM(TemporalMemory):
@@ -47,6 +50,9 @@ class ConfidenceModulatedTM(TemporalMemory):
         self._hardness_count = 0
         self._conf_over_thr_steps = 0
         self._total_steps = 0
+
+        self.version_tag = "CONF-TM v2 (no-base-learn; hardened adapt)"
+        log.info(self.version_tag)
 
         # Step counter
         self.timestep = 0

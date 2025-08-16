@@ -23,6 +23,7 @@ from htm.network import HTMNetwork, ConfidenceHTMNetwork
 # ==================== TESTING FRAMEWORK ====================
 
 from htm.encoders import ScalarEncoder
+from htm.sp import SpatialPooler
 from htm.metrics import capture_transition_reprs
 from htm.experiments.sequence_learning import train_curve as seq_train_curve
 from htm.experiments.continual_learning import run_experiment as continual_learning_exp
@@ -106,7 +107,7 @@ class TestSuite:
         """Unit tests for Spatial Pooler."""
         print("\n--- Testing Spatial Pooler ---")
 
-        sp = SpatialPooler(input_size=100, column_count=100, sparsity=0.1, seed=42)
+        sp = SpatialPooler(input_size=100, column_count=100, sparsity=0.1, boost_strength=0.0, seed=42)
         encoder = ScalarEncoder(n_bits=100)
 
         # Test 1: Sparsity maintained
@@ -132,7 +133,7 @@ class TestSuite:
         print("✓ Similar inputs produce overlapping outputs")
 
         # Test 3: Learning strengthens responses
-        sp_learn = SpatialPooler(input_size=100, column_count=100, sparsity=0.1, seed=43)
+        sp_learn = SpatialPooler(input_size=100, column_count=100, sparsity=0.1, boost_strength=0.0, seed=43)
         test_input = encoder.encode(7)
 
         initial_connected = sp_learn.permanences >= sp_learn.connected_threshold

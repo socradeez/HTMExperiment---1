@@ -88,7 +88,27 @@ def plot_main_dashboard(results: Dict[str, Any], save_path: str) -> None:
     ax = axes[1, 0]
     from .network import ConfidenceHTMNetwork
     from .encoders import ScalarEncoder
-    network = ConfidenceHTMNetwork(input_size=100, use_confidence=True)
+    tm_params = {
+        "cells_per_column": 8,
+        "activation_threshold": 10,
+        "learning_threshold": 8,
+        "initial_permanence": 0.5,
+        "permanence_increment": 0.02,
+        "permanence_decrement": 0.005,
+        "max_synapses_per_segment": 16,
+        "seed": 0,
+        "hardening_rate": 0.0,
+        "hardening_threshold": 0.7,
+    }
+    sp_params = {
+        "seed": 0,
+        "column_count": 100,
+        "sparsity": 0.1,
+        "boost_strength": 0.0,
+    }
+    network = ConfidenceHTMNetwork(
+        input_size=100, tm_params=tm_params, sp_params=sp_params
+    )
     encoder = ScalarEncoder(min_val=0, max_val=10, n_bits=100)
     s1, s2 = [1, 2, 3, 4, 5], [6, 7, 8, 9, 10]
     for _ in range(20):

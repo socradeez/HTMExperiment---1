@@ -7,6 +7,7 @@ import numpy as np
 
 from .encoders import ScalarEncoder
 from .network import ConfidenceHTMNetwork
+from .confidence_tm import ConfidenceModulatedTM
 from .metrics import capture_transition_reprs, stability_overlap
 from .plotting import set_matplotlib_headless, plot_hardening_heatmaps
 
@@ -60,6 +61,7 @@ def run_hardening_sweep(
                 net = ConfidenceHTMNetwork(
                     input_size=100, tm_params=tm_params, sp_params=sp_params
                 )
+                assert isinstance(net.tm, ConfidenceModulatedTM)
 
                 # train on sequence A
                 for _ in range(epochs_per_phase):
@@ -98,6 +100,9 @@ def run_hardening_sweep(
                     else 0.0
                 )
                 frac_conf = net.tm._conf_over_thr_steps / max(1, net.tm._total_steps)
+                print(
+                    f"rate {rate} thr {thr} seed {seed}: mean_conf={mean_conf:.3f} frac_conf_ge_thr={frac_conf:.3f}"
+                )
                 mean_hard = net.tm._hardness_sum / max(1, net.tm._hardness_count)
                 updates = net.tm._hardening_updates
                 decays = net.tm._hardness_decays
