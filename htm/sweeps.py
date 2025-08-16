@@ -126,6 +126,9 @@ def run_hardening_sweep(
                 print(
                     f"hardening: updates={updates}, mean_hardness={mean_hard:.4f}"
                 )
+                print(
+                    f"segments_missing_meta={net.tm._segments_missing_meta}"
+                )
 
                 csv_rows.append(
                     {

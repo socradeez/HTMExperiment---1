@@ -50,6 +50,7 @@ class ConfidenceModulatedTM(TemporalMemory):
         self._hardness_count = 0
         self._conf_over_thr_steps = 0
         self._total_steps = 0
+        self._segments_missing_meta = 0
 
         self.version_tag = "CONF-TM v2 (no-base-learn; hardened adapt)"
         log.info(self.version_tag)
@@ -139,7 +140,14 @@ class ConfidenceModulatedTM(TemporalMemory):
                     best_score = score
 
             if best_segment is not None:
-                self._adapt_segment(best_segment[1], prev_active, permanence_inc=learning_rate)
+                self._current_cell_id = cell_id
+                try:
+                    self._adapt_segment(
+                        best_segment[1], prev_active, permanence_inc=learning_rate
+                    )
+                finally:
+                    if hasattr(self, "_current_cell_id"):
+                        del self._current_cell_id
             elif len(prev_active) >= self.learning_threshold:
                 self._grow_segment(cell_id, prev_active)
 
@@ -147,9 +155,16 @@ class ConfidenceModulatedTM(TemporalMemory):
         for cell_id in wrongly_predictive:
             for seg_idx, segment in enumerate(self.segments.get(cell_id, [])):
                 if (cell_id, seg_idx) in self.active_segments:
-                    self._adapt_segment(
-                        segment, self.active_cells, permanence_inc=-self.predicted_decrement
-                    )
+                    self._current_cell_id = cell_id
+                    try:
+                        self._adapt_segment(
+                            segment,
+                            self.active_cells,
+                            permanence_inc=-self.predicted_decrement,
+                        )
+                    finally:
+                        if hasattr(self, "_current_cell_id"):
+                            del self._current_cell_id
 
     # ------------------------------------------------------------------
     def _grow_segment(self, cell_id, source_cells):
@@ -162,14 +177,20 @@ class ConfidenceModulatedTM(TemporalMemory):
 
     # ------------------------------------------------------------------
     def _adapt_segment(self, segment, active_cells, permanence_inc):
-        if "owner" in segment and "seg_idx" in segment:
-            cell_id = segment["owner"]
-            seg_idx = segment["seg_idx"]
-            self._adapt_segment_with_hardening(
-                cell_id, seg_idx, segment, active_cells, permanence_inc
-            )
-        else:
-            super()._adapt_segment(segment, active_cells, permanence_inc)
+        if "owner" not in segment or "seg_idx" not in segment:
+            self._segments_missing_meta += 1
+            owner = segment.get("owner_guess", None)
+            if owner is None:
+                segment["owner"] = getattr(self, "_current_cell_id", -1)
+            else:
+                segment["owner"] = owner
+            segment["seg_idx"] = segment.get("seg_idx", -1)
+
+        cell_id = segment["owner"]
+        seg_idx = segment["seg_idx"]
+        self._adapt_segment_with_hardening(
+            cell_id, seg_idx, segment, active_cells, permanence_inc
+        )
 
     # ------------------------------------------------------------------
     def _adapt_segment_with_hardening(
