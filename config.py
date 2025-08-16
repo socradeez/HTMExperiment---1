@@ -33,6 +33,8 @@ class RunConfig:
     learn: bool = True
     figure_mode: str = "single"  # "single" or "dashboard"
     annotate_formulas: bool = True
+    per_input_plots_cells: bool = True
+    per_input_plots_columns: bool = True
     output_dir: str = "runs"
     run_name: Optional[str] = None
 

@@ -6,7 +6,11 @@ from datetime import datetime
 
 from config import ModelConfig, RunConfig, json_dumps
 from metrics import MetricsCollector
-from plotting import plot_single_metric_figures, plot_dashboard
+from plotting import (
+    plot_single_metric_figures,
+    plot_dashboard,
+    plot_per_input_phasefold,
+)
 from htm_core import SpatialPooler, TemporalMemory, seeded_rng, active_cells_prev_global
 
 def make_run_dir(base: str, run_name: str) -> str:
@@ -54,7 +58,8 @@ def main(model_cfg: ModelConfig, run_cfg: RunConfig):
     token_map = build_inputs(rng, run_cfg, model_cfg)
     tokens = run_cfg.sequence.split(run_cfg.sequence_delimiter)
     metrics = MetricsCollector(
-        num_cells=model_cfg.num_columns*model_cfg.cells_per_column,
+        num_cells=model_cfg.num_columns * model_cfg.cells_per_column,
+        cells_per_column=model_cfg.cells_per_column,
         output_dir=outdir,
         run_name=run_name,
         ema_threshold=run_cfg.ema_threshold,
@@ -124,6 +129,11 @@ def main(model_cfg: ModelConfig, run_cfg: RunConfig):
         plot_single_metric_figures(
             saved["csv"], plots_dir, annotate_formulas=run_cfg.annotate_formulas
         )
+
+    if run_cfg.per_input_plots_cells:
+        plot_per_input_phasefold(saved["csv"], plots_dir, what="cells")
+    if run_cfg.per_input_plots_columns:
+        plot_per_input_phasefold(saved["csv"], plots_dir, what="columns")
 
     print("Run complete. Outputs in:", outdir)
     return outdir

@@ -22,6 +22,10 @@ METRIC_NOTES = {
     "stability_best_window": "max_{i∈last W} J(A_t, A_prev^i(x))",
     "stability_worst_window": "min_{i∈last W} J(A_t, A_prev^i(x))",
     "converged": "1 if J(A_t, EMA_x) ≥ τ\nfor M sightings\n(τ={tau}, M={M})",
+    "overlap_last_cells": "|A_t ∩ A_last(x)|",
+    "diff_last_cells": "|A_t ⊕ A_last(x)|",
+    "overlap_last_cols": "|C_t ∩ C_last(x)|",
+    "diff_last_cols": "|C_t ⊕ C_last(x)|",
 }
 
 def annotate(ax, metric_name, model_cfg_dict, run_cfg_dict):
@@ -164,4 +168,40 @@ def plot_dashboard(
         ax.set_title(title)
         plt.tight_layout()
         plt.savefig(f"{base}_{title.replace(' ', '_')}.png")
+        plt.close()
+
+
+def plot_per_input_phasefold(csv_path: str, outdir: str, what: str):
+    _ensure_dir(outdir)
+    df = pd.read_csv(csv_path)
+    if "input_id" not in df.columns or "step" not in df.columns:
+        return
+    df = df.sort_values("step")
+    df["occurrence"] = df.groupby("input_id").cumcount() + 1
+    if what == "cells":
+        cols = {
+            "overlap": "overlap_last_cells",
+            "diff": "diff_last_cells",
+        }
+    else:
+        cols = {
+            "overlap": "overlap_last_cols",
+            "diff": "diff_last_cols",
+        }
+    inputs = df["input_id"].unique()
+    for kind, col in cols.items():
+        if col not in df.columns:
+            continue
+        plt.figure()
+        ax = plt.gca()
+        for inp in inputs:
+            sub = df[df["input_id"] == inp]
+            ax.plot(sub["occurrence"], sub[col], label=inp)
+        ax.set_xlabel("occurrence (per input)")
+        ax.set_ylabel(kind)
+        ax.set_title(f"per-input {kind} to last ({what})")
+        ax.legend()
+        plt.tight_layout()
+        fname = f"per_input_{kind}_last_{what}.png"
+        plt.savefig(os.path.join(outdir, fname))
         plt.close()

@@ -8,6 +8,7 @@ from collections import defaultdict, Counter, deque
 @dataclass
 class StabilityState:
     last_sdr: Dict[str, Set[int]] = field(default_factory=dict)
+    last_cols: Dict[str, Set[int]] = field(default_factory=dict)
     counts: Dict[str, Counter] = field(default_factory=lambda: defaultdict(Counter))
     totals: Dict[str, int] = field(default_factory=lambda: defaultdict(int))
     history: Dict[str, deque] = field(default_factory=dict)
@@ -15,6 +16,7 @@ class StabilityState:
 @dataclass
 class MetricsCollector:
     num_cells: int
+    cells_per_column: int
     output_dir: str
     run_name: str
     ema_threshold: float = 0.5
@@ -30,6 +32,9 @@ class MetricsCollector:
     consecutive_hits: Dict[str, int] = field(default_factory=lambda: defaultdict(int))
     uniq_cells_ever: Set[int] = field(default_factory=set)
     uniq_cols_ever: Set[int] = field(default_factory=set)
+
+    def __post_init__(self):
+        self.num_cols = self.num_cells // self.cells_per_column
 
     def _proto_from_counts(self, inp_id: str) -> Set[int]:
         c = self.stability.counts[inp_id]
@@ -66,16 +71,21 @@ class MetricsCollector:
         fn = active_cells - predicted_prev
 
         # Bursting columns: active but with no predicted_prev cells in that column
-        predicted_cols_prev = {c//10 for c in predicted_prev}
+        predicted_cols_prev = {c // self.cells_per_column for c in predicted_prev}
         bursting_cols = set(active_columns) - predicted_cols_prev
 
         precision = len(tp) / (len(tp) + len(fp)) if (len(tp)+len(fp))>0 else 0.0
         recall    = len(tp) / (len(tp) + len(fn)) if (len(tp)+len(fn))>0 else 0.0
         f1        = (2*precision*recall)/(precision+recall) if (precision+recall)>0 else 0.0
 
-        last = self.stability.last_sdr.get(inp_id, set())
-        jac_last = self.jaccard(active_cells, last) if last else 0.0
-        overlap_last = len(active_cells & last) if last else 0
+        last_cells = self.stability.last_sdr.get(inp_id, set())
+        last_cols = self.stability.last_cols.get(inp_id, set())
+
+        jac_last = self.jaccard(active_cells, last_cells) if last_cells else 0.0
+        overlap_last_cells = len(active_cells & last_cells) if last_cells else 0
+        diff_last_cells = len(active_cells ^ last_cells)
+        overlap_last_cols = len(active_columns & last_cols) if last_cols else 0
+        diff_last_cols = len(active_columns ^ last_cols)
         proto = self._proto_from_counts(inp_id)
         jac_ema = self.jaccard(active_cells, proto) if proto else 0.0
         best_hist, worst_hist = self._hist_best_worst(inp_id, active_cells)
@@ -87,7 +97,7 @@ class MetricsCollector:
         converged = 1 if self.consecutive_hits[inp_id] >= self.convergence_M else 0
 
         self.uniq_cells_ever.update(active_cells)
-        self.uniq_cols_ever.update({c//10 for c in active_cells})
+        self.uniq_cols_ever.update(active_columns)
 
         row = {
             "step": step,
@@ -107,8 +117,8 @@ class MetricsCollector:
             "active_columns": len(active_columns),
             "bursting_columns": len(bursting_cols),
             "sparsity_cells": len(active_cells) / self.num_cells,
-            "sparsity_columns": len(active_columns) / (self.num_cells // 10),
-            "stability_overlap_last": overlap_last,
+            "sparsity_columns": len(active_columns) / self.num_cols,
+            "stability_overlap_last": overlap_last_cells,
             "stability_jaccard_last": jac_last,
             "stability_jaccard_ema": jac_ema,
             "stability_best_window": best_hist,
@@ -116,10 +126,15 @@ class MetricsCollector:
             "converged": converged,
             "unique_active_cells_ever": len(self.uniq_cells_ever),
             "unique_active_columns_ever": len(self.uniq_cols_ever),
+            "overlap_last_cells": overlap_last_cells,
+            "diff_last_cells": diff_last_cells,
+            "overlap_last_cols": overlap_last_cols,
+            "diff_last_cols": diff_last_cols,
         }
         self.rows.append(row)
 
         self.stability.last_sdr[inp_id] = set(active_cells)
+        self.stability.last_cols[inp_id] = set(active_columns)
         self.stability.totals[inp_id] += 1
         for c in active_cells:
             self.stability.counts[inp_id][c] += 1
