@@ -123,6 +123,9 @@ def run_hardening_sweep(
                 mean_hard = net.tm._hardness_sum / max(1, net.tm._hardness_count)
                 updates = net.tm._hardening_updates
                 decays = net.tm._hardness_decays
+                print(
+                    f"hardening: updates={updates}, mean_hardness={mean_hard:.4f}"
+                )
 
                 csv_rows.append(
                     {
@@ -224,6 +227,51 @@ def run_hardening_sweep(
     return {
         "csv": csv_path,
         "json": json_path,
-        "heatmaps": heatmap_path,
+       "heatmaps": heatmap_path,
         "pareto": scatter_path,
     }
+
+
+def quick_ab(seed: int = 0) -> None:
+    """Run a single-seed A/B comparison at two thresholds."""
+    from htm.encoders import ScalarEncoder
+    from htm.network import ConfidenceHTMNetwork
+
+    enc = ScalarEncoder(min_val=0, max_val=10, n_bits=100)
+    A, B = [1, 2, 3, 4, 5], [1, 2, 6, 7, 5]
+
+    def build(thr):
+        sp = {
+            "column_count": 100,
+            "sparsity": 0.1,
+            "boost_strength": 0.0,
+            "seed": seed,
+        }
+        tm = {
+            "cells_per_column": 8,
+            "activation_threshold": 10,
+            "learning_threshold": 8,
+            "max_synapses_per_segment": 16,
+            "initial_permanence": 0.5,
+            "permanence_increment": 0.02,
+            "permanence_decrement": 0.005,
+            "hardening_rate": 0.2,
+            "hardening_threshold": thr,
+            "seed": seed,
+        }
+        return ConfidenceHTMNetwork(100, sp_params=sp, tm_params=tm)
+
+    for thr in (0.55, 0.70):
+        net = build(thr)
+        for _ in range(25):
+            net.reset_sequence()
+            for v in A:
+                net.compute(enc.encode(v))
+        for _ in range(25):
+            net.reset_sequence()
+            for v in B:
+                net.compute(enc.encode(v))
+        mean_hardness = net.tm._hardness_sum / max(1, net.tm._hardness_count)
+        print(
+            f"[AB] thr={thr} -> hardening_updates={net.tm._hardening_updates}, mean_hardness={mean_hardness:.4f}"
+        )

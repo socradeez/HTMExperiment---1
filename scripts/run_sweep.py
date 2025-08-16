@@ -2,7 +2,7 @@ import os
 import sys
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 import argparse
-from htm.sweeps import run_hardening_sweep
+from htm.sweeps import run_hardening_sweep, quick_ab
 
 def _parse_float_list(value: str):
     return [float(v) for v in value.split(',') if v]
@@ -17,13 +17,23 @@ def main():
     parser.add_argument('--seeds', type=str, default='0,1,2', help='Comma-separated random seeds')
     parser.add_argument('--epochs-per-phase', type=int, default=25, help='Training epochs for each phase')
     parser.add_argument('--outdir', type=str, default='sweep_results', help='Output directory')
+    parser.add_argument('--ab-check', action='store_true', help='Run quick A/B hardening check')
     args = parser.parse_args()
 
     rates = _parse_float_list(args.rates)
     thresholds = _parse_float_list(args.thresholds)
     seeds = _parse_int_list(args.seeds)
 
-    run_hardening_sweep(rates=rates, thresholds=thresholds, seeds=seeds, epochs_per_phase=args.epochs_per_phase, outdir=args.outdir)
+    if args.ab_check:
+        quick_ab(seed=seeds[0] if seeds else 0)
+    else:
+        run_hardening_sweep(
+            rates=rates,
+            thresholds=thresholds,
+            seeds=seeds,
+            epochs_per_phase=args.epochs_per_phase,
+            outdir=args.outdir,
+        )
 
 if __name__ == '__main__':
     main()
