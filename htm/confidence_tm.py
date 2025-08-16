@@ -197,7 +197,7 @@ class ConfidenceModulatedTM(TemporalMemory):
 
     # ------------------------------------------------------------------
     def _adapt_segment_with_hardening(
-        self, cell_id, seg_idx, segment, active_cells, base_rate
+        self, cell_id, seg_idx, segment, active_cells, permanence_inc
     ) -> None:
         conf = self.current_system_confidence
         for i, (target_cell, perm) in enumerate(list(segment["synapses"])):
@@ -226,9 +226,10 @@ class ConfidenceModulatedTM(TemporalMemory):
             )
 
             if target_cell in active_cells:
-                delta = base_rate * (1.0 - new_hardness)
+                effective_inc = permanence_inc * (1.0 - new_hardness)
+                new_perm = float(np.clip(perm + effective_inc, 0.0, 1.0))
             else:
-                delta = -self.permanence_decrement * (1.0 - new_hardness)
+                effective_decay = self.permanence_decrement * (1.0 - new_hardness)
+                new_perm = max(0.0, perm - effective_decay)
 
-            new_perm = float(np.clip(perm + delta, 0.0, 1.0))
             segment["synapses"][i] = (target_cell, new_perm)
