@@ -35,6 +35,8 @@ class RunConfig:
     annotate_formulas: bool = True
     per_input_plots_cells: bool = True
     per_input_plots_columns: bool = True
+    diagnostics_print: bool = True
+    sp_near_threshold_eps: float = 0.01
     output_dir: str = "runs"
     run_name: Optional[str] = None
 

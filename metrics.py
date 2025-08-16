@@ -65,7 +65,12 @@ class MetricsCollector:
                  input_seen_global: int,
                  active_cells: Set[int],
                  active_columns: Set[int],
-                 predicted_prev: Set[int]):
+                 predicted_prev: Set[int],
+                 kth_overlap: Optional[float] = None,
+                 kplus1_overlap: Optional[float] = None,
+                 k_margin: Optional[float] = None,
+                 sp_connected_mean: Optional[float] = None,
+                 sp_near_thr_frac: Optional[float] = None):
         tp = active_cells & predicted_prev
         fp = predicted_prev - active_cells
         fn = active_cells - predicted_prev
@@ -130,6 +135,11 @@ class MetricsCollector:
             "diff_last_cells": diff_last_cells,
             "overlap_last_cols": overlap_last_cols,
             "diff_last_cols": diff_last_cols,
+            "kth_overlap": kth_overlap,
+            "kplus1_overlap": kplus1_overlap,
+            "k_margin": k_margin,
+            "sp_connected_mean": sp_connected_mean,
+            "sp_near_thr_frac": sp_near_thr_frac,
         }
         self.rows.append(row)
 
@@ -143,6 +153,7 @@ class MetricsCollector:
         self.stability.history[inp_id].append(set(active_cells))
 
         self.sparse_indices["active_cells"].append(np.fromiter(active_cells, dtype=np.int32))
+        self.sparse_indices["active_columns"].append(np.fromiter(active_columns, dtype=np.int32))
         self.sparse_indices["predicted_prev"].append(np.fromiter(predicted_prev, dtype=np.int32))
         self.sparse_indices["tp"].append(np.fromiter(tp, dtype=np.int32))
         self.sparse_indices["fp"].append(np.fromiter(fp, dtype=np.int32))

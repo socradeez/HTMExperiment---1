@@ -3,6 +3,7 @@ import os, json
 import numpy as np
 from typing import Dict, List, Set
 from datetime import datetime
+from itertools import combinations
 
 from config import ModelConfig, RunConfig, json_dumps
 from metrics import MetricsCollector
@@ -57,6 +58,16 @@ def main(model_cfg: ModelConfig, run_cfg: RunConfig):
 
     token_map = build_inputs(rng, run_cfg, model_cfg)
     tokens = run_cfg.sequence.split(run_cfg.sequence_delimiter)
+    sdr_sets = {t: set(map(int, token_map[t])) for t in token_map}
+    sdr_similarity = {}
+    for a, b in combinations(token_map.keys(), 2):
+        sa, sb = sdr_sets[a], sdr_sets[b]
+        overlap = len(sa & sb)
+        union = len(sa | sb)
+        jacc = overlap / union if union else 1.0
+        sdr_similarity[f"{a}-{b}"] = {"overlap": overlap, "jaccard": jacc}
+    with open(os.path.join(outdir, "input_sdr_similarity.json"), "w") as f:
+        json.dump(sdr_similarity, f, indent=2)
     metrics = MetricsCollector(
         num_cells=model_cfg.num_columns * model_cfg.cells_per_column,
         cells_per_column=model_cfg.cells_per_column,
@@ -83,8 +94,21 @@ def main(model_cfg: ModelConfig, run_cfg: RunConfig):
         dense_inp = sdr_to_dense(idx, model_cfg.input_size)
 
         overlaps = sp.compute_overlap(dense_inp)
+        sorted_overlaps = np.sort(overlaps)[::-1]
+        k = model_cfg.k_active_columns
+        kth_overlap = float(sorted_overlaps[k-1]) if k-1 < sorted_overlaps.size else 0.0
+        kplus1_overlap = float(sorted_overlaps[k]) if k < sorted_overlaps.size else 0.0
+        k_margin = kth_overlap - kplus1_overlap
         active_cols = sp.k_wta(overlaps)
         active_cols_set = set(active_cols.tolist())
+        sp_connected_mean = None
+        sp_near_thr_frac = None
+        if active_cols.size > 0:
+            perms = sp.proximal_perm[active_cols]
+            connected = perms >= model_cfg.perm_connected
+            sp_connected_mean = float(connected.sum(axis=1).mean())
+            near_thr = np.abs(perms - model_cfg.perm_connected) <= run_cfg.sp_near_threshold_eps
+            sp_near_thr_frac = float(near_thr.sum() / perms.size)
 
         predictive_cells = tm.compute_predictive_cells(active_cells_prev_global)
         active_cells, active_segments = tm.activate_cells(active_cols, predictive_cells)
@@ -101,6 +125,11 @@ def main(model_cfg: ModelConfig, run_cfg: RunConfig):
             active_cells=active_cells,
             active_columns=active_cols_set,
             predicted_prev=predicted_prev,
+            kth_overlap=kth_overlap,
+            kplus1_overlap=kplus1_overlap,
+            k_margin=k_margin,
+            sp_connected_mean=sp_connected_mean,
+            sp_near_thr_frac=sp_near_thr_frac,
         )
 
         if run_cfg.learn:
@@ -134,6 +163,69 @@ def main(model_cfg: ModelConfig, run_cfg: RunConfig):
         plot_per_input_phasefold(saved["csv"], plots_dir, what="cells")
     if run_cfg.per_input_plots_columns:
         plot_per_input_phasefold(saved["csv"], plots_dir, what="columns")
+
+    if run_cfg.diagnostics_print:
+        try:
+            import pandas as pd
+        except Exception as e:
+            print("Diagnostics skipped: pandas not available", e)
+        else:
+            df = pd.read_csv(saved["csv"])
+            idx = np.load(saved["npz"], allow_pickle=True)
+            act_cols = [set(arr.tolist()) for arr in idx["active_columns"]]
+            reuse_prev = []
+            reuse_jacc = []
+            prev = set()
+            for cur in act_cols:
+                inter = len(cur & prev)
+                reuse_prev.append(inter)
+                union = len(cur | prev)
+                reuse_jacc.append(inter / union if union else 0.0)
+                prev = cur
+            df["reuse_prev"] = reuse_prev
+            df["reuse_prev_jacc"] = reuse_jacc
+            token_by_pos = {i: tokens[i] for i in range(len(tokens))}
+
+            print("=== Diagnostics Summary ===")
+            print("Input SDR similarity (overlap/jaccard):")
+            for pair, stats in sdr_similarity.items():
+                print(f"{pair}: {stats['overlap']} / {stats['jaccard']:.3f}")
+
+            grp = df.groupby("pos_in_seq")
+            km_mean = grp["k_margin"].mean()
+            km_std = grp["k_margin"].std()
+            km_p10 = grp["k_margin"].quantile(0.1)
+            km_med = grp["k_margin"].median()
+            print("\nPer-input k-WTA margin (mean±std, p10):")
+            for pos in km_mean.index:
+                tok = token_by_pos.get(pos, str(pos))
+                print(f"{tok}: {km_mean[pos]:.3f}±{km_std[pos]:.3f}, p10={km_p10[pos]:.3f}")
+            low_p10 = km_p10.idxmin()
+            low_med = km_med.idxmin()
+            print(f"Lowest p10 margin: {token_by_pos.get(low_p10, low_p10)}")
+            print(f"Lowest median margin: {token_by_pos.get(low_med, low_med)}")
+
+            reuse_mean = grp["reuse_prev"].mean()
+            print("\nCross-input column reuse (mean reuse count):")
+            for pos in reuse_mean.index:
+                tok = token_by_pos.get(pos, str(pos))
+                print(f"{tok}: {reuse_mean[pos]:.3f}")
+
+            sp_conn = grp["sp_connected_mean"].mean()
+            sp_near = grp["sp_near_thr_frac"].mean()
+            print("\nSP health on active columns (mean connected, near-thr frac):")
+            for pos in sp_conn.index:
+                tok = token_by_pos.get(pos, str(pos))
+                print(f"{tok}: {sp_conn[pos]:.3f}, {sp_near[pos]:.3f}")
+
+            pred_stats = grp[["predicted_cells", "bursting_columns", "precision", "recall"]].mean()
+            print("\nPrediction health by input (means):")
+            for pos, row in pred_stats.iterrows():
+                tok = token_by_pos.get(pos, str(pos))
+                print(
+                    f"{tok}: pred={row['predicted_cells']:.3f}, burst={row['bursting_columns']:.3f}, "
+                    f"prec={row['precision']:.3f}, rec={row['recall']:.3f}"
+                )
 
     print("Run complete. Outputs in:", outdir)
     return outdir
