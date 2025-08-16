@@ -22,6 +22,8 @@ class ConfidenceModulatedTM(TemporalMemory):
         confidence_threshold: float = 0.7,
         hardening_rate: float = 0.03,
         hardening_threshold: float = 0.7,
+        dynamic_threshold: bool = False,
+        ema_alpha: float = 0.1,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -33,6 +35,8 @@ class ConfidenceModulatedTM(TemporalMemory):
         self.confidence_threshold = confidence_threshold
         self.hardening_rate = hardening_rate
         self.hardening_threshold = hardening_threshold
+        self.dynamic_threshold = dynamic_threshold
+        self.ema_alpha = ema_alpha
 
         # Confidence tracking
         self.cell_confidence = defaultdict(lambda: deque(maxlen=confidence_window))
@@ -60,6 +64,7 @@ class ConfidenceModulatedTM(TemporalMemory):
 
         # Step counter
         self.timestep = 0
+        self._conf_ema = 0.0
 
     # ------------------------------------------------------------------
     def compute(self, active_columns, learn: bool = True):
@@ -72,8 +77,21 @@ class ConfidenceModulatedTM(TemporalMemory):
 
         if self.timestep > 0:
             self._update_confidence_metrics(active_columns, prev_predictive)
+            if self._total_steps == 0:
+                self._conf_ema = self.current_system_confidence
+            else:
+                self._conf_ema = (
+                    (1 - self.ema_alpha) * self._conf_ema
+                    + self.ema_alpha * self.current_system_confidence
+                )
+            gate_thr = (
+                max(self.hardening_threshold, self._conf_ema)
+                if self.dynamic_threshold
+                else self.hardening_threshold
+            )
+            self._current_hardening_threshold = gate_thr
             self._total_steps += 1
-            if self.current_system_confidence >= self.hardening_threshold:
+            if self.current_system_confidence >= gate_thr:
                 self._conf_over_thr_steps += 1
 
         if learn:
@@ -200,13 +218,12 @@ class ConfidenceModulatedTM(TemporalMemory):
         self, cell_id, seg_idx, segment, active_cells, permanence_inc
     ) -> None:
         conf = self.current_system_confidence
+        thr = getattr(self, "_current_hardening_threshold", self.hardening_threshold)
         for i, (target_cell, perm) in enumerate(list(segment["synapses"])):
             hardness = self.synapse_hardness[cell_id].get((seg_idx, i), 0.0)
 
-            if conf >= self.hardening_threshold:
-                delta_h = self.hardening_rate * max(
-                    0.0, conf - self.hardening_threshold
-                )
+            if conf >= thr:
+                delta_h = self.hardening_rate * max(0.0, conf - thr)
             else:
                 delta_h = -0.5 * self.hardening_rate
                 if abs(delta_h) > 0:
@@ -226,10 +243,12 @@ class ConfidenceModulatedTM(TemporalMemory):
             )
 
             if target_cell in active_cells:
-                effective_inc = permanence_inc * (1.0 - new_hardness)
+                effective_inc = permanence_inc * (1.0 - 0.25 * new_hardness)
                 new_perm = float(np.clip(perm + effective_inc, 0.0, 1.0))
             else:
-                effective_decay = self.permanence_decrement * (1.0 - new_hardness)
-                new_perm = max(0.0, perm - effective_decay)
+                effective_dec = self.permanence_decrement * (1.0 - new_hardness)
+                new_perm = max(0.0, perm - effective_dec)
 
+            min_floor = new_hardness * 0.15
+            new_perm = max(new_perm, min_floor)
             segment["synapses"][i] = (target_cell, new_perm)

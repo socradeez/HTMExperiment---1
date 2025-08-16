@@ -14,8 +14,8 @@ from .plotting import set_matplotlib_headless, plot_hardening_heatmaps
 
 def run_hardening_sweep(
     *,
-    rates: Sequence[float] = (0.0, 0.02, 0.05, 0.1, 0.2),
-    thresholds: Sequence[float] = (0.55, 0.6, 0.65, 0.7),
+    rates: Sequence[float] = (0.0, 0.05, 0.1, 0.2, 0.3),
+    thresholds: Sequence[float] = (0.50, 0.55, 0.60, 0.65),
     seeds: Sequence[int] = (0, 1, 2),
     epochs_per_phase: int = 25,
     outdir: str = "sweep_results",
@@ -93,14 +93,6 @@ def run_hardening_sweep(
                     for v in seq_b:
                         net.compute(encoder.encode(v))
 
-                # evaluate accuracy on B after training
-                net.reset_sequence()
-                b_accs = []
-                for v in seq_b:
-                    res = net.compute(encoder.encode(v), learn=False)
-                    b_accs.append(1.0 - res["anomaly_score"])
-                seq_b_acc = float(np.mean(b_accs)) if b_accs else 0.0
-
                 # evaluate retention on A
                 net.reset_sequence()
                 accs = []
@@ -120,17 +112,18 @@ def run_hardening_sweep(
                 print(
                     f"rate {rate} thr {thr} seed {seed}: mean_conf={mean_conf:.3f} frac_conf_ge_thr={frac_conf:.3f}"
                 )
-                mean_hard = net.tm._hardness_sum / max(
-                    1, net.tm._hardness_count
-                )
-                mean_hard_all = net.tm._mean_hardness_all
+                mean_hard = net.tm._hardness_sum / max(1, net.tm._hardness_count)
                 updates = net.tm._hardening_updates
                 decays = net.tm._hardness_decays
                 print(
-                    f"hardening: updates={updates}, mean_hardness={mean_hard:.4f}, mean_hardness_all={mean_hard_all:.4f}"
+                    f"hardening: updates={updates}, mean_hardness={mean_hard:.4f}"
                 )
                 print(
                     f"segments_missing_meta={net.tm._segments_missing_meta}"
+                )
+
+                print(
+                    f"ret={retention_acc:.3f}, stab={stab:.3f}, mh={mean_hard:.3f}"
                 )
 
                 csv_rows.append(
@@ -143,11 +136,9 @@ def run_hardening_sweep(
                         "representation_stability": stab,
                         "mean_conf": mean_conf,
                         "frac_conf_ge_thr": frac_conf,
-                        "mean_hardness": mean_hard,
-                        "mean_hardness_all": mean_hard_all,
+                        "mean_hardness_updated": mean_hard,
                         "hardening_updates": updates,
                         "hardness_decays": decays,
-                        "seq_b_accuracy": seq_b_acc,
                     }
                 )
                 agg[(rate, thr)]["init"].append(initial_acc)
@@ -165,12 +156,10 @@ def run_hardening_sweep(
                 "seed",
                 "initial_accuracy",
                 "retention_accuracy",
-                "seq_b_accuracy",
                 "representation_stability",
                 "mean_conf",
                 "frac_conf_ge_thr",
-                "mean_hardness",
-                "mean_hardness_all",
+                "mean_hardness_updated",
                 "hardening_updates",
                 "hardness_decays",
             ],
@@ -240,15 +229,16 @@ def run_hardening_sweep(
     }
 
 
-def quick_ab(seed: int = 0) -> None:
-    """Run a single-seed A/B comparison at two thresholds."""
+def quick_ab(seed: int = 0, epochs_per_phase: int = 25) -> None:
+    """Run a single-seed A/B comparison with and without hardening."""
     from htm.encoders import ScalarEncoder
     from htm.network import ConfidenceHTMNetwork
+    from htm.metrics import capture_transition_reprs, jaccard_stability
 
     enc = ScalarEncoder(min_val=0, max_val=10, n_bits=100)
     A, B = [1, 2, 3, 4, 5], [1, 2, 6, 7, 5]
 
-    def build(thr):
+    def build(rate, thr):
         sp = {
             "column_count": 100,
             "sparsity": 0.1,
@@ -263,24 +253,33 @@ def quick_ab(seed: int = 0) -> None:
             "initial_permanence": 0.5,
             "permanence_increment": 0.02,
             "permanence_decrement": 0.005,
-            "hardening_rate": 0.2,
+            "hardening_rate": rate,
             "hardening_threshold": thr,
             "seed": seed,
         }
         return ConfidenceHTMNetwork(100, sp_params=sp, tm_params=tm)
 
-    for thr in (0.55, 0.70):
-        net = build(thr)
-        for _ in range(25):
+    configs = [("baseline", 0.0, 0.6), ("hardened", 0.2, 0.50)]
+    for label, rate, thr in configs:
+        net = build(rate, thr)
+        for _ in range(epochs_per_phase):
             net.reset_sequence()
             for v in A:
                 net.compute(enc.encode(v))
-        for _ in range(25):
+        reps_before = capture_transition_reprs(net, A, enc)
+        for _ in range(epochs_per_phase):
             net.reset_sequence()
             for v in B:
                 net.compute(enc.encode(v))
-        mean_hardness = net.tm._hardness_sum / max(1, net.tm._hardness_count)
-        mean_hardness_all = net.tm._mean_hardness_all
+        net.reset_sequence()
+        accs = []
+        for v in A:
+            res = net.compute(enc.encode(v), learn=False)
+            accs.append(1.0 - res["anomaly_score"])
+        retention_acc = float(np.mean(accs)) if accs else 0.0
+        reps_after = capture_transition_reprs(net, A, enc)
+        stab = jaccard_stability(reps_before, reps_after)
+        mean_hard = net.tm._hardness_sum / max(1, net.tm._hardness_count)
         print(
-            f"[AB] thr={thr} -> hardening_updates={net.tm._hardening_updates}, mean_hardness={mean_hardness:.4f}, mean_hardness_all={mean_hardness_all:.4f}"
+            f"[AB {label}] ret={retention_acc:.3f}, stab={stab:.3f}, updates={net.tm._hardening_updates}, mh={mean_hard:.3f}"
         )
