@@ -1,7 +1,7 @@
 
 import os, json
 import numpy as np
-from typing import Dict, List, Set
+from typing import Dict, List, Set, Optional
 from datetime import datetime
 from itertools import combinations
 from dataclasses import asdict
@@ -35,8 +35,13 @@ def flip_bits(rng: np.random.Generator, sdr: np.ndarray, size: int, flip: int) -
     out |= set(turn_on.tolist())
     return np.array(sorted(out), dtype=np.int32)
 
-def build_inputs(rng: np.random.Generator, cfg: RunConfig, model_cfg: ModelConfig) -> Dict[str, np.ndarray]:
-    tokens = cfg.sequence.split(cfg.sequence_delimiter)
+def build_inputs(
+    rng: np.random.Generator,
+    cfg: RunConfig,
+    model_cfg: ModelConfig,
+    tokens_unique: Optional[List[str]] = None,
+) -> Dict[str, np.ndarray]:
+    tokens = tokens_unique if tokens_unique is not None else cfg.sequence.split(cfg.sequence_delimiter)
     mapping = {}
     for t in tokens:
         idx = random_sdr_indices(rng, size=model_cfg.input_size, on_bits=cfg.sdr_on_bits)
@@ -50,16 +55,26 @@ def main(model_cfg: ModelConfig, run_cfg: RunConfig):
     rng = seeded_rng(run_cfg.seed)
     run_name = run_cfg.run_name or "htm_np"
     outdir = make_run_dir(run_cfg.output_dir, run_name)
+
+    tokens_unique: Optional[List[str]] = None
+    if run_cfg.explicit_step_tokens is not None:
+        tokens_unique = sorted(set(run_cfg.explicit_step_tokens))
+        run_cfg.steps = len(run_cfg.explicit_step_tokens)
+
     with open(os.path.join(outdir, "config_model.json"), "w") as f:
         f.write(json_dumps(asdict(model_cfg)))
+    run_dict = asdict(run_cfg)
+    if run_dict.get("explicit_step_tokens") is not None:
+        run_dict["explicit_step_tokens_len"] = len(run_dict["explicit_step_tokens"])
+        del run_dict["explicit_step_tokens"]
     with open(os.path.join(outdir, "config_run.json"), "w") as f:
-        f.write(json_dumps(asdict(run_cfg)))
+        f.write(json_dumps(run_dict))
 
     sp = SpatialPooler.create(model_cfg, rng)
     tm = TemporalMemory.create(model_cfg, rng)
 
-    token_map = build_inputs(rng, run_cfg, model_cfg)
-    tokens = run_cfg.sequence.split(run_cfg.sequence_delimiter)
+    token_map = build_inputs(rng, run_cfg, model_cfg, tokens_unique)
+    tokens = tokens_unique if tokens_unique is not None else run_cfg.sequence.split(run_cfg.sequence_delimiter)
     sdr_sets = {t: set(map(int, token_map[t])) for t in token_map}
     sdr_similarity = {}
     for a, b in combinations(token_map.keys(), 2):
@@ -84,13 +99,23 @@ def main(model_cfg: ModelConfig, run_cfg: RunConfig):
     predicted_prev: Set[int] = set()
     step = 0
     pos = 0
-    seq_id = "seq0"
 
     global active_cells_prev_global
     active_cells_prev_global = set()
 
     while step < run_cfg.steps:
-        tok = tokens[pos % len(tokens)]
+        if run_cfg.explicit_step_tokens is not None:
+            tok = run_cfg.explicit_step_tokens[step]
+            pos_in_seq = (
+                run_cfg.token_pos_map.get(tok, -1)
+                if run_cfg.token_pos_map
+                else (pos % len(tokens))
+            )
+            seq_id = tok.split("_")[0]
+        else:
+            tok = tokens[pos % len(tokens)]
+            pos_in_seq = pos % len(tokens)
+            seq_id = "seq0"
         idx = token_map[tok]
         idx = flip_bits(rng, idx, model_cfg.input_size, run_cfg.input_flip_bits)
         dense_inp = sdr_to_dense(idx, model_cfg.input_size)
@@ -120,7 +145,7 @@ def main(model_cfg: ModelConfig, run_cfg: RunConfig):
         metrics.log_step(
             step=step,
             sequence_id=seq_id,
-            pos_in_seq=(pos % len(tokens)),
+            pos_in_seq=pos_in_seq,
             inp_id=tok,
             input_seen_in_run=metrics.seen_in_run[tok],
             input_seen_global=metrics.seen_global[tok],

@@ -65,6 +65,11 @@ class RunConfig:
     # Noise
     input_flip_bits: int = 0
 
+    # Optional explicit scheduling
+    explicit_step_tokens: Optional[List[str]] = None
+    token_pos_map: Optional[Dict[str, int]] = None
+    schedule_name: Optional[str] = None
+
 def json_dumps(d) -> str:
     import json
     return json.dumps(d, indent=2, sort_keys=True)
