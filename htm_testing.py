@@ -12,74 +12,7 @@ warnings.filterwarnings('ignore')
 
 # ==================== BASE HTM IMPLEMENTATION ====================
 
-from htm.sp import SpatialPooler
-
-from htm.tm import TemporalMemory
-from htm.confidence_tm import ConfidenceModulatedTM
-
-class ConfidenceHTMNetwork:
-    """HTM Network with confidence-based modulation."""
-
-    def __init__(self, input_size=100, use_confidence=True, **kwargs):
-        self.input_size = input_size
-        self.use_confidence = use_confidence
-
-        self.sp = SpatialPooler(input_size=input_size, **kwargs.get('sp_params', {}))
-
-        if use_confidence:
-            self.tm = ConfidenceModulatedTM(
-                column_count=self.sp.column_count, 
-                **kwargs.get('tm_params', {})
-            )
-        else:
-            self.tm = TemporalMemory(
-                column_count=self.sp.column_count,
-                **kwargs.get('tm_params', {})
-            )
-
-        # Metrics
-        self.prediction_accuracy = []
-        self.anomaly_scores = []
-        self.system_confidence_history = []
-
-    def compute(self, input_vector, learn=True):
-        """Process input through SP and TM."""
-        active_columns = self.sp.compute(input_vector, learn=learn)
-
-        predicted_columns = self._get_predicted_columns()
-        correctly_predicted = np.sum(active_columns & predicted_columns)
-
-        active_cells, predictive_cells = self.tm.compute(active_columns, learn=learn)
-
-        if np.sum(active_columns) > 0:
-            accuracy = correctly_predicted / np.sum(active_columns)
-            self.prediction_accuracy.append(accuracy)
-            anomaly = 1.0 - accuracy
-            self.anomaly_scores.append(anomaly)
-
-        # Track system confidence if available
-        if self.use_confidence and hasattr(self.tm, 'current_system_confidence'):
-            self.system_confidence_history.append(self.tm.current_system_confidence)
-
-        return {
-            'active_columns': active_columns,
-            'active_cells': active_cells,
-            'predictive_cells': predictive_cells,
-            'anomaly_score': self.anomaly_scores[-1] if self.anomaly_scores else 1.0,
-            'system_confidence': getattr(self.tm, 'current_system_confidence', None)
-        }
-
-    def _get_predicted_columns(self):
-        """Get columns with predictive cells."""
-        predicted_columns = np.zeros(self.sp.column_count, dtype=bool)
-        for cell in self.tm.predictive_cells:
-            col = cell // self.tm.cells_per_column
-            predicted_columns[col] = True
-        return predicted_columns
-
-    def reset_sequence(self):
-        """Reset TM state for new sequence."""
-        self.tm.reset()
+from htm.network import HTMNetwork, ConfidenceHTMNetwork
 
 
 # ==================== TESTING FRAMEWORK ====================
@@ -115,11 +48,18 @@ class TestSuite:
             'max_synapses_per_segment': 16,
             'seed': seed
         }
-        sp_params = {'seed': seed}
-        baseline = ConfidenceHTMNetwork(input_size=100, use_confidence=False,
-                                        tm_params=tm_params, sp_params=sp_params)
-        confidence = ConfidenceHTMNetwork(input_size=100, use_confidence=True,
-                                          tm_params=tm_params, sp_params=sp_params)
+        sp_params = {
+            'seed': seed,
+            'column_count': 100,
+            'sparsity': 0.1,
+            'boost_strength': 0.0,
+        }
+        baseline = HTMNetwork(input_size=100,
+                               tm_params=tm_params,
+                               sp_params=sp_params)
+        confidence = ConfidenceHTMNetwork(input_size=100,
+                                          tm_params=tm_params,
+                                          sp_params=sp_params)
         return baseline, confidence
 
     def test_sequence_length_scaling(self, lengths=None, seeds=None):
