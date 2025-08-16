@@ -106,6 +106,7 @@ def plot_main_dashboard(results: Dict[str, Any], save_path: str) -> None:
         "sparsity": 0.1,
         "boost_strength": 0.0,
     }
+    # ConfidenceHTMNetwork always enables confidence; no extra flag needed
     network = ConfidenceHTMNetwork(
         input_size=100, tm_params=tm_params, sp_params=sp_params
     )
