@@ -61,6 +61,15 @@ def run_hardening_sweep(
                 net = ConfidenceHTMNetwork(
                     input_size=100, tm_params=tm_params, sp_params=sp_params
                 )
+                print(
+                    f"TM params check: rate={rate}, thr={thr}, tm.rate={net.tm.hardening_rate}, tm.thr={net.tm.hardening_threshold}"
+                )
+                assert (
+                    abs(net.tm.hardening_rate - rate) < 1e-9
+                ), "hardening_rate not applied"
+                assert (
+                    abs(net.tm.hardening_threshold - thr) < 1e-9
+                ), "hardening_threshold not applied"
                 assert isinstance(net.tm, ConfidenceModulatedTM)
 
                 # train on sequence A
