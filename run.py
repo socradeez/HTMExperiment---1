@@ -111,11 +111,19 @@ def main(model_cfg: ModelConfig, run_cfg: RunConfig):
     saved = metrics.finalize()
     plots_dir = os.path.join(outdir, "plots"); os.makedirs(plots_dir, exist_ok=True)
     if run_cfg.figure_mode == "single":
-        plot_single_metric_figures(saved["csv"], plots_dir)
+        plot_single_metric_figures(
+            saved["csv"], plots_dir, annotate_formulas=run_cfg.annotate_formulas
+        )
     elif run_cfg.figure_mode == "dashboard":
-        plot_dashboard(saved["csv"], os.path.join(plots_dir, "dashboard.png"))
+        plot_dashboard(
+            saved["csv"],
+            os.path.join(plots_dir, "dashboard.png"),
+            annotate_formulas=run_cfg.annotate_formulas,
+        )
     else:
-        plot_single_metric_figures(saved["csv"], plots_dir)
+        plot_single_metric_figures(
+            saved["csv"], plots_dir, annotate_formulas=run_cfg.annotate_formulas
+        )
 
     print("Run complete. Outputs in:", outdir)
     return outdir

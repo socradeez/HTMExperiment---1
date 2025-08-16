@@ -32,6 +32,7 @@ class RunConfig:
     steps: int = 400
     learn: bool = True
     figure_mode: str = "single"  # "single" or "dashboard"
+    annotate_formulas: bool = True
     output_dir: str = "runs"
     run_name: Optional[str] = None
 
