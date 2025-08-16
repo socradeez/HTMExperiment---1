@@ -1,0 +1,14 @@
+Todo: 
+
+Restart with base HTM implementation. Clearly test and demonstrate confidence metrics. Test different combinations of numerator/denomenator
+to come up with most salient metric by which to modulate learning signal
+
+Test base HTM with different sequence length, catastrophic forgetting sequence, noise robustness, etc all with parameterization sweeps
+to best understand the limitations and where the system needs to be improved (and where it *can* be improved)
+
+Record data about number of active neurons, number of predicted neurons, number of bursting columns, number of active but not predicted,
+number of active and predicted, number of predicted but not active. 
+
+Determine how best to gauge *accuracy*(does this encoding match other encodings of similar inputs?) and *stability* (does it still match
+after other sequences have been learned?)
+
