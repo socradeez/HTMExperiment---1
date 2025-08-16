@@ -630,16 +630,22 @@ class TestSuite:
             reps[f"{seq[i-1]}->{seq[i]}"] = preds & act if preds else set()
         return reps
 
-    def _build_networks(self, seed):
+    def _build_networks(self, seed,
+                        permanence_increment=0.02,
+                        permanence_decrement=0.005,
+                        hardening_rate=0.0,
+                        hardening_threshold=0.7):
         tm_params = {
             'cells_per_column': 8,
             'activation_threshold': 10,
             'learning_threshold': 8,
             'initial_permanence': 0.5,
-            'permanence_increment': 0.1,
-            'permanence_decrement': 0.01,
+            'permanence_increment': permanence_increment,
+            'permanence_decrement': permanence_decrement,
             'max_synapses_per_segment': 16,
-            'seed': seed
+            'seed': seed,
+            'hardening_rate': hardening_rate,
+            'hardening_threshold': hardening_threshold
         }
         sp_params = {'seed': seed}
         baseline = ConfidenceHTMNetwork(input_size=100, use_confidence=False,
@@ -809,21 +815,13 @@ class TestSuite:
                                  "mean_conf": [], "frac_conf": [],
                                  "mean_hard": [], "updates": []}
                 for seed in seeds:
-                    tm_params = {
-                        'cells_per_column': 8,
-                        'activation_threshold': 10,
-                        'learning_threshold': 8,
-                        'initial_permanence': 0.5,
-                        'permanence_increment': 0.02,
-                        'permanence_decrement': 0.005,
-                        'max_synapses_per_segment': 16,
-                        'seed': seed,
-                        'hardening_rate': rate,
-                        'hardening_threshold': thresh
-                    }
-                    sp_params = {'seed': seed}
-                    net = ConfidenceHTMNetwork(input_size=100, use_confidence=True,
-                                               tm_params=tm_params, sp_params=sp_params)
+                    _, net = self._build_networks(
+                        seed,
+                        permanence_increment=0.02,
+                        permanence_decrement=0.005,
+                        hardening_rate=rate,
+                        hardening_threshold=thresh
+                    )
 
                     def train_on(seq):
                         for _ in range(epochs_per_phase):
