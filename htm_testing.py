@@ -18,24 +18,17 @@ from htm.network import HTMNetwork, ConfidenceHTMNetwork
 # ==================== TESTING FRAMEWORK ====================
 
 from htm.encoders import ScalarEncoder
+from htm.metrics import capture_transition_reprs
+from htm.experiments.sequence_learning import train_curve as seq_train_curve
+from htm.experiments.continual_learning import run_experiment as continual_learning_exp
+from htm.experiments.branching import run_experiment as branching_exp
+from htm.experiments.scaling import run_experiment as scaling_exp
 
 class TestSuite:
     """Comprehensive testing for HTM implementations."""
 
     def __init__(self):
         self.results = {}
-
-    def capture_transition_reprs(self, network, seq, encoder):
-        """Capture predicted-driven activations for each transition in seq."""
-        reps = {}
-        network.reset_sequence()
-        network.compute(encoder.encode(seq[0]), learn=False)
-        for i in range(1, len(seq)):
-            res = network.compute(encoder.encode(seq[i]), learn=False)
-            preds = set(res['predictive_cells'])
-            act = set(res['active_cells'])
-            reps[f"{seq[i-1]}->{seq[i]}"] = preds & act if preds else set()
-        return reps
 
     def _build_networks(self, seed):
         tm_params = {
@@ -63,142 +56,21 @@ class TestSuite:
         return baseline, confidence
 
     def test_sequence_length_scaling(self, lengths=None, seeds=None):
-        """
-        Train on a single sequence A of varying length L, measure final accuracy on A,
-        then learn a new sequence B (no overlap) and measure retention on A.
-        Report mean across seeds.
-        """
+        """Train on sequence A of varying length then evaluate retention."""
         print("\n--- Sequence Length Scaling Study ---")
-        import numpy as np
-
         lengths = lengths or [5, 10, 20, 40, 60, 80]
         seeds = seeds or [0, 1, 2]
-
         encoder = ScalarEncoder(min_val=0, max_val=100, n_bits=100)
-
-        results = {
-            "lengths": lengths,
-            "baseline_acc_mean": [],
-            "confidence_acc_mean": [],
-            "baseline_ret_mean": [],
-            "confidence_ret_mean": [],
-        }
-
-        for L in lengths:
-            b_acc, c_acc, b_ret, c_ret = [], [], [], []
-
-            for s in seeds:
-                # Build baseline/confidence networks with selective TM params
-                base, conf = self._build_networks(s)
-
-                # Build sequences (no overlap): A at offset 10, B at offset 40
-                seqA = list(range(10, 10 + L))
-                seqB = list(range(40, 40 + L))
-
-                def train_on(net, seq, epochs):
-                    for _ in range(epochs):
-                        net.reset_sequence()
-                        for v in seq:
-                            net.compute(encoder.encode(v))
-
-                def eval_on(net, seq):
-                    net.reset_sequence()
-                    accs = []
-                    for v in seq:
-                        r = net.compute(encoder.encode(v), learn=False)
-                        accs.append(1.0 - r['anomaly_score'])
-                    return float(np.mean(accs))
-
-                # epochs scale lightly with L to keep runtime controlled
-                epochs = max(10, L // 5)
-
-                # Train both nets on A and evaluate
-                train_on(base, seqA, epochs)
-                train_on(conf, seqA, epochs)
-                b_acc.append(eval_on(base, seqA))
-                c_acc.append(eval_on(conf, seqA))
-
-                # Learn B, then evaluate retention on A (no learning)
-                train_on(base, seqB, epochs)
-                train_on(conf, seqB, epochs)
-                b_ret.append(eval_on(base, seqA))
-                c_ret.append(eval_on(conf, seqA))
-
-            results["baseline_acc_mean"].append(float(np.mean(b_acc)))
-            results["confidence_acc_mean"].append(float(np.mean(c_acc)))
-            results["baseline_ret_mean"].append(float(np.mean(b_ret)))
-            results["confidence_ret_mean"].append(float(np.mean(c_ret)))
-
+        results = scaling_exp(self._build_networks, lengths, seeds, encoder)
         self.results["scaling_study"] = results
         print("✓ Scaling study complete:", results)
 
     def test_branching_context_disambiguation(self, prefix=3, length=15, seeds=None):
-        """
-        Two sequences share a prefix of 'prefix' items, then diverge:
-          A: p0, p1, ..., p{prefix-1}, a_prefix, a_{prefix+1}, ...
-          B: p0, p1, ..., p{prefix-1}, b_prefix, b_{prefix+1}, ...
-        Measure prediction accuracy at and after the branching point.
-        """
+        """Two sequences share a prefix then diverge; measure accuracy around branch."""
         print("\n--- Branching / Context Disambiguation ---")
-        import numpy as np
         seeds = seeds or [0, 1, 2]
         encoder = ScalarEncoder(min_val=0, max_val=100, n_bits=100)
-
-        def build_AB(prefix, length):
-            assert length > prefix + 2
-            P = list(range(10, 10 + prefix))                    # shared prefix centers
-            A = P + list(range(20, 20 + (length - prefix)))     # A tail
-            B = P + list(range(40, 40 + (length - prefix)))     # B tail
-            return A, B
-
-        A, B = build_AB(prefix, length)
-
-        results = {"prefix": prefix, "length": length, "baseline": {}, "confidence": {}}
-
-        for model_name in ["baseline", "confidence"]:
-            branch_acc = []      # accuracy exactly at the first divergent element
-            post_acc = []        # mean accuracy for the next 3 steps after branching
-
-            for s in seeds:
-                base, conf = self._build_networks(s)
-                net = base if model_name == "baseline" else conf
-
-                # Train alternating A and B to encourage context learning
-                for _ in range(30):
-                    net.reset_sequence()
-                    for v in A: net.compute(encoder.encode(v))
-                    net.reset_sequence()
-                    for v in B: net.compute(encoder.encode(v))
-
-                # Evaluate at branching point
-                def eval_branch(net, seq_prev, seq_next):
-                    # run all up to branching index (prefix-1), then present branching element and record accuracy
-                    net.reset_sequence()
-                    for i, v in enumerate(seq_prev):
-                        if i == prefix:
-                            break
-                        net.compute(encoder.encode(v), learn=False)
-                    # step at branching
-                    r0 = net.compute(encoder.encode(seq_next[prefix]), learn=False)
-                    a0 = float(1.0 - r0['anomaly_score'])
-                    # next few steps
-                    post = []
-                    for j in range(prefix+1, min(prefix+4, len(seq_next))):
-                        rj = net.compute(encoder.encode(seq_next[j]), learn=False)
-                        post.append(float(1.0 - rj['anomaly_score']))
-                    return a0, float(np.mean(post)) if post else a0
-
-                a0, a_post = eval_branch(net, A, A)
-                b0, b_post = eval_branch(net, B, B)
-                # average A and B branches
-                branch_acc.append((a0 + b0) / 2.0)
-                post_acc.append((a_post + b_post) / 2.0)
-
-            results[model_name]["branch_acc_mean"] = float(np.mean(branch_acc))
-            results[model_name]["branch_acc_std"]  = float(np.std(branch_acc))
-            results[model_name]["post_acc_mean"]   = float(np.mean(post_acc))
-            results[model_name]["post_acc_std"]    = float(np.std(post_acc))
-
+        results = branching_exp(self._build_networks, encoder, prefix=prefix, length=length, seeds=seeds)
         self.results["branching_context"] = results
         print("✓ Branching context:", results)
 
@@ -260,13 +132,13 @@ class TestSuite:
                     metrics = eval_on(seq_a)
                     initial = metrics['last_step_acc']
                     initial_mean = metrics['mean_acc']
-                    reps_before = self.capture_transition_reprs(net, seq_a, encoder)
+                    reps_before = capture_transition_reprs(net, seq_a, encoder)
 
                     train_on(seq_b)
                     metrics = eval_on(seq_a)
                     retention = metrics['last_step_acc']
                     retention_mean = metrics['mean_acc']
-                    reps_after = self.capture_transition_reprs(net, seq_a, encoder)
+                    reps_after = capture_transition_reprs(net, seq_a, encoder)
 
                     stability = []
                     for tkey in reps_before.keys():
@@ -636,50 +508,16 @@ class TestSuite:
     def test_sequence_learning_comparison(self):
         """Compare baseline vs confidence-modulated HTM."""
         print("\n--- Sequence Learning Comparison ---")
-
         seeds = [0, 1, 2]
         encoder = ScalarEncoder(min_val=0, max_val=10, n_bits=100)
         sequence = [1, 2, 3, 4, 5]
-
-        baseline_acc_all = []
-        confidence_acc_all = []
-
-        for seed in seeds:
-            baseline, confidence = self._build_networks(seed)
-            baseline_accuracy = []
-            confidence_accuracy = []
-
-            for epoch in range(30):
-                epoch_baseline_acc = []
-                epoch_confidence_acc = []
-
-                baseline.reset_sequence()
-                confidence.reset_sequence()
-
-                for value in sequence:
-                    input_sdr = encoder.encode(value)
-                    result_b = baseline.compute(input_sdr)
-                    result_c = confidence.compute(input_sdr)
-
-                    epoch_baseline_acc.append(1.0 - result_b['anomaly_score'])
-                    epoch_confidence_acc.append(1.0 - result_c['anomaly_score'])
-
-                baseline_accuracy.append(float(np.mean(epoch_baseline_acc)))
-                confidence_accuracy.append(float(np.mean(epoch_confidence_acc)))
-
-            baseline_acc_all.append(baseline_accuracy)
-            confidence_acc_all.append(confidence_accuracy)
-
-        baseline_mean = np.mean(baseline_acc_all, axis=0).tolist()
-        confidence_mean = np.mean(confidence_acc_all, axis=0).tolist()
-        baseline_final = [acc[-1] for acc in baseline_acc_all]
-        confidence_final = [acc[-1] for acc in confidence_acc_all]
-
+        res = seq_train_curve(self._build_networks, sequence, encoder, seeds=seeds, epochs=30)
         self.results['sequence_comparison'] = {
-            'baseline_accuracy': baseline_mean,
-            'confidence_accuracy': confidence_mean
+            'baseline_accuracy': res['baseline_accuracy'],
+            'confidence_accuracy': res['confidence_accuracy']
         }
-
+        baseline_final = res['baseline_final']
+        confidence_final = res['confidence_final']
         print(f"✓ Baseline final accuracy: {np.mean(baseline_final):.3f} ± {np.std(baseline_final):.3f}")
         print(f"✓ Confidence final accuracy: {np.mean(confidence_final):.3f} ± {np.std(confidence_final):.3f}")
 
@@ -688,136 +526,30 @@ class TestSuite:
         print("\n--- Continual Learning Test ---")
         seeds = [0, 1, 2]
         encoder = ScalarEncoder(min_val=0, max_val=10, n_bits=100)
-
         sequence_a = [1, 2, 3, 4, 5]
         sequence_b = [1, 2, 6, 7, 5]
-
-        baseline_seq_a = []
-        baseline_seq_b = []
-        baseline_seq_a_after = []
-        confidence_seq_a = []
-        confidence_seq_b = []
-        confidence_seq_a_after = []
-        baseline_stabilities = []
-        confidence_stabilities = []
-
-        for seed in seeds:
-            baseline, confidence = self._build_networks(seed)
-
-            print("  Phase 1: Learning sequence A [1->2->3->4->5]...")
-            for network, acc_list in [(baseline, baseline_seq_a), (confidence, confidence_seq_a)]:
-                for epoch in range(25):
-                    network.reset_sequence()
-                    epoch_acc = []
-                    for value in sequence_a:
-                        result = network.compute(encoder.encode(value))
-                        epoch_acc.append(1.0 - result['anomaly_score'])
-                acc_list.append(float(np.mean(epoch_acc)))
-
-            print("  Capturing sequence A representations...")
-            baseline_reps_A = self.capture_transition_reprs(baseline, sequence_a, encoder)
-            confidence_reps_A = self.capture_transition_reprs(confidence, sequence_a, encoder)
-
-            print("  Phase 2: Learning sequence B [1->2->6->7->5] (overlaps with A)...")
-            for network, acc_list in [(baseline, baseline_seq_b), (confidence, confidence_seq_b)]:
-                for epoch in range(25):
-                    network.reset_sequence()
-                    epoch_acc = []
-                    for value in sequence_b:
-                        result = network.compute(encoder.encode(value))
-                        epoch_acc.append(1.0 - result['anomaly_score'])
-                acc_list.append(float(np.mean(epoch_acc)))
-
-            print("  Phase 3: Testing sequence A retention...")
-            baseline_reps_after = self.capture_transition_reprs(baseline, sequence_a, encoder)
-            confidence_reps_after = self.capture_transition_reprs(confidence, sequence_a, encoder)
-
-            for network, acc_list in [(baseline, baseline_seq_a_after), (confidence, confidence_seq_a_after)]:
-                network.reset_sequence()
-                test_acc = []
-                for value in sequence_a:
-                    res = network.compute(encoder.encode(value), learn=False)
-                    test_acc.append(1.0 - res['anomaly_score'])
-                acc_list.append(float(np.mean(test_acc)))
-
-            baseline_stability = []
-            confidence_stability = []
-            for key in baseline_reps_A.keys():
-                b0, b1 = baseline_reps_A[key], baseline_reps_after.get(key, set())
-                c0, c1 = confidence_reps_A[key], confidence_reps_after.get(key, set())
-                baseline_stability.append(len(b0 & b1) / (len(b0) or 1))
-                confidence_stability.append(len(c0 & c1) / (len(c0) or 1))
-            baseline_stabilities.append(float(np.mean(baseline_stability)) if baseline_stability else 0.0)
-            confidence_stabilities.append(float(np.mean(confidence_stability)) if confidence_stability else 0.0)
-
-        avg_baseline_stability = float(np.mean(baseline_stabilities)) if baseline_stabilities else 0.0
-        avg_confidence_stability = float(np.mean(confidence_stabilities)) if confidence_stabilities else 0.0
-
-        baseline_results = {
-            'seq_a': [float(np.mean(baseline_seq_a))],
-            'seq_b_during': [float(np.mean(baseline_seq_b))],
-            'seq_a_after': [float(np.mean(baseline_seq_a_after))]
-        }
-        confidence_results = {
-            'seq_a': [float(np.mean(confidence_seq_a))],
-            'seq_b_during': [float(np.mean(confidence_seq_b))],
-            'seq_a_after': [float(np.mean(confidence_seq_a_after))]
-        }
-
-        print("\n  Analyzing synaptic permanence distributions...")
-
-        def get_permanence_stats(network):
-            all_permanences = []
-            for cell_segments in network.tm.segments.values():
-                for segment in cell_segments:
-                    for _, perm in segment['synapses']:
-                        all_permanences.append(perm)
-            if all_permanences:
-                return {
-                    'mean': float(np.mean(all_permanences)),
-                    'high_perm_ratio': float(np.mean([p > 0.7 for p in all_permanences])),
-                    'very_high_perm_ratio': float(np.mean([p > 0.85 for p in all_permanences])),
-                    'max': float(np.max(all_permanences)),
-                    'total_synapses': int(len(all_permanences))
-                }
-            return {'mean': 0.0, 'high_perm_ratio': 0.0, 'very_high_perm_ratio': 0.0, 'max': 0.0, 'total_synapses': 0}
-
-        baseline_perm_stats = get_permanence_stats(baseline)
-        confidence_perm_stats = get_permanence_stats(confidence)
-
-        print(f"  Baseline: {baseline_perm_stats['total_synapses']} synapses, "
-              f"mean={baseline_perm_stats['mean']:.3f}, "
-              f">0.7={baseline_perm_stats['high_perm_ratio']:.1%}, "
-              f"max={baseline_perm_stats['max']:.3f}")
-        print(f"  Confidence: {confidence_perm_stats['total_synapses']} synapses, "
-              f"mean={confidence_perm_stats['mean']:.3f}, "
-              f">0.7={confidence_perm_stats['high_perm_ratio']:.1%}, "
-              f"max={confidence_perm_stats['max']:.3f}")
-
-        if hasattr(confidence.tm, 'current_system_confidence'):
-            print(f"  Final system confidence: {confidence.tm.current_system_confidence:.3f}")
-
-        self.results['continual_learning'] = {
-            'baseline': baseline_results,
-            'confidence': confidence_results,
-            'baseline_stability': avg_baseline_stability,
-            'confidence_stability': avg_confidence_stability,
-            'baseline_perm_stats': baseline_perm_stats,
-            'confidence_perm_stats': confidence_perm_stats
-        }
-
+        res = continual_learning_exp(self._build_networks, sequence_a, sequence_b, encoder,
+                                     seeds=seeds, epochs=25)
+        self.results['continual_learning'] = res
+        baseline_seq_a = res['baseline']['seq_a']
+        baseline_seq_a_after = res['baseline']['seq_a_after']
+        confidence_seq_a = res['confidence']['seq_a']
+        confidence_seq_a_after = res['confidence']['seq_a_after']
         print(f"\n✓ Baseline retention: {np.mean(baseline_seq_a):.3f} → {np.mean(baseline_seq_a_after):.3f} (±{np.std(baseline_seq_a_after):.3f})")
         print(f"✓ Confidence retention: {np.mean(confidence_seq_a):.3f} → {np.mean(confidence_seq_a_after):.3f} (±{np.std(confidence_seq_a_after):.3f})")
-        print(f"✓ Baseline representation stability: {avg_baseline_stability:.1%}")
-        print(f"✓ Confidence representation stability: {avg_confidence_stability:.1%}")
-
-        if avg_confidence_stability > avg_baseline_stability + 0.05:
+        print(f"✓ Baseline representation stability: {res['baseline_stability']:.1%}")
+        print(f"✓ Confidence representation stability: {res['confidence_stability']:.1%}")
+        baseline_perm_stats = res['baseline_perm_stats']
+        confidence_perm_stats = res['confidence_perm_stats']
+        print("\n  Analyzing synaptic permanence distributions...")
+        print(f"  Baseline: {baseline_perm_stats['total_synapses']} synapses, mean={baseline_perm_stats['mean']:.3f}, >0.7={baseline_perm_stats['high_perm_ratio']:.1%}, max={baseline_perm_stats['max']:.3f}")
+        print(f"  Confidence: {confidence_perm_stats['total_synapses']} synapses, mean={confidence_perm_stats['mean']:.3f}, >0.7={confidence_perm_stats['high_perm_ratio']:.1%}, max={confidence_perm_stats['max']:.3f}")
+        if res['confidence_stability'] > res['baseline_stability'] + 0.05:
             print("  ✅ SUCCESS: Confidence modulation improves stability!")
-        elif abs(avg_confidence_stability - avg_baseline_stability) < 0.05:
+        elif abs(res['confidence_stability'] - res['baseline_stability']) < 0.05:
             print("  ⚠️ WARNING: Confidence modulation shows no clear improvement")
         else:
             print("  ❌ FAILURE: Confidence modulation reduces stability")
-
     def test_noise_robustness(self):
         """Test robustness to noisy inputs."""
         print("\n--- Noise Robustness Test ---")
