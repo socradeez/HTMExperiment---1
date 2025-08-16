@@ -8,7 +8,7 @@ import numpy as np
 from .encoders import ScalarEncoder
 from .network import ConfidenceHTMNetwork
 from .confidence_tm import ConfidenceModulatedTM
-from .metrics import capture_transition_reprs, stability_overlap
+from .metrics import capture_transition_reprs, jaccard_stability
 from .plotting import set_matplotlib_headless, plot_hardening_heatmaps
 
 
@@ -75,7 +75,7 @@ def run_hardening_sweep(
                 for v in seq_a:
                     res = net.compute(encoder.encode(v), learn=False)
                     accs.append(1.0 - res["anomaly_score"])
-                initial_acc = float(accs[-1]) if accs else 0.0
+                initial_acc = float(np.mean(accs)) if accs else 0.0
                 reps_before = capture_transition_reprs(net, seq_a, encoder)
 
                 # train on sequence B
@@ -84,16 +84,24 @@ def run_hardening_sweep(
                     for v in seq_b:
                         net.compute(encoder.encode(v))
 
+                # evaluate accuracy on B after training
+                net.reset_sequence()
+                b_accs = []
+                for v in seq_b:
+                    res = net.compute(encoder.encode(v), learn=False)
+                    b_accs.append(1.0 - res["anomaly_score"])
+                seq_b_acc = float(np.mean(b_accs)) if b_accs else 0.0
+
                 # evaluate retention on A
                 net.reset_sequence()
                 accs = []
                 for v in seq_a:
                     res = net.compute(encoder.encode(v), learn=False)
                     accs.append(1.0 - res["anomaly_score"])
-                retention_acc = float(accs[-1]) if accs else 0.0
+                retention_acc = float(np.mean(accs)) if accs else 0.0
                 reps_after = capture_transition_reprs(net, seq_a, encoder)
 
-                stab = stability_overlap(reps_before, reps_after)
+                stab = jaccard_stability(reps_before, reps_after)
                 mean_conf = (
                     float(np.mean(net.tm.system_confidence))
                     if net.tm.system_confidence
@@ -120,6 +128,7 @@ def run_hardening_sweep(
                         "mean_hardness": mean_hard,
                         "hardening_updates": updates,
                         "hardness_decays": decays,
+                        "seq_b_accuracy": seq_b_acc,
                     }
                 )
                 agg[(rate, thr)]["init"].append(initial_acc)
@@ -137,6 +146,7 @@ def run_hardening_sweep(
                 "seed",
                 "initial_accuracy",
                 "retention_accuracy",
+                "seq_b_accuracy",
                 "representation_stability",
                 "mean_conf",
                 "frac_conf_ge_thr",
