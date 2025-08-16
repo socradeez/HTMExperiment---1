@@ -100,7 +100,7 @@ def main(model_cfg: ModelConfig, run_cfg: RunConfig):
 
         if run_cfg.learn:
             sp.learn(dense_inp, active_cols)
-            tm.learn(active_cells_prev_global, active_cols, active_cells, active_segments)
+            tm.learn(active_cells_prev_global, active_cols, active_cells, active_segments, predictive_cells)
 
         predicted_prev = tm.compute_predictive_cells(active_cells)
         active_cells_prev_global = set(active_cells)

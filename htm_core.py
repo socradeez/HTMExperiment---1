@@ -143,8 +143,25 @@ class TemporalMemory:
               active_cells_prev: Set[int],
               active_columns: np.ndarray,
               active_cells: Set[int],
-              active_segments: Dict[int, List[Segment]]):
-        predicted_cols = {cell // self.cfg.cells_per_column for cell in active_cells}
+              active_segments: Dict[int, List[Segment]],
+              predictive_prev: Set[int]):
+        """Update synapses based on activity at the current timestep.
+
+        Parameters
+        ----------
+        active_cells_prev : Set[int]
+            Cells active at t−1.
+        active_columns : np.ndarray
+            Columns that won inhibition at t.
+        active_cells : Set[int]
+            Cells active at t after applying predictions (non-bursting cells suppressed).
+        active_segments : Dict[int, List[Segment]]
+            Segments that were active at t.
+        predictive_prev : Set[int]
+            Cells that were predicted for t based on state at t−1. Used to
+            determine which columns were truly predicted versus bursting.
+        """
+        predicted_cols = {cell // self.cfg.cells_per_column for cell in predictive_prev}
         bursting_cols = set(active_columns) - predicted_cols
 
         for cell_id, segs in active_segments.items():
