@@ -5,6 +5,7 @@ from typing import Dict, List, Set, Optional
 from datetime import datetime
 from itertools import combinations
 from dataclasses import asdict
+import time
 
 from config import ModelConfig, RunConfig, json_dumps
 from metrics import MetricsCollector
@@ -71,18 +72,16 @@ def main(model_cfg: ModelConfig, run_cfg: RunConfig):
         f.write(json_dumps(run_dict))
 
     if run_cfg.backend == "torch":
-        from torch_backend import make_sp_torch, make_tm_predict_torch
+        from torch_backend import make_sp_torch, make_tm_torch
         import torch
         sp = make_sp_torch(model_cfg, run_cfg.seed, run_cfg.device)
         device = sp.device
-        tm = TemporalMemory.create(model_cfg, rng)
-        tm_predict = make_tm_predict_torch(model_cfg, tm, run_cfg.device)
+        tm = make_tm_torch(model_cfg, run_cfg.seed, run_cfg.device)
         print(f"Backend: torch (device={device})")
     else:
         sp = SpatialPooler.create(model_cfg, rng)
         device = None
         tm = TemporalMemory.create(model_cfg, rng)
-        tm_predict = None
         print("Backend: numpy")
 
     token_map = build_inputs(rng, run_cfg, model_cfg, tokens_unique)
@@ -112,6 +111,7 @@ def main(model_cfg: ModelConfig, run_cfg: RunConfig):
     step = 0
     pos = 0
 
+    t_start = time.time()
     global active_cells_prev_global
     active_cells_prev_global = set()
 
@@ -151,9 +151,9 @@ def main(model_cfg: ModelConfig, run_cfg: RunConfig):
                 sp_connected_mean = float(connected.sum(dim=1).float().mean().item())
                 near_thr = torch.abs(perms - model_cfg.perm_connected) <= run_cfg.sp_near_threshold_eps
                 sp_near_thr_frac = float(near_thr.float().sum().item() / perms.numel())
-            pred_cells_t, _ = tm_predict.predict_from_set(active_cells_prev_global)
-            predictive_cells = set(pred_cells_t.cpu().numpy().tolist())
-            active_cells, active_segments = tm.activate_cells(active_cols, predictive_cells)
+            pred_cells_t, _, active_segments_t = tm.predict_from_set(active_cells_prev_global)
+            active_cells_t = tm.activate_cells(active_cols_t, pred_cells_t)
+            active_cells = set(active_cells_t.cpu().numpy().tolist())
         else:
             overlaps = sp.compute_overlap(dense_inp)
             sorted_overlaps = np.sort(overlaps)[::-1]
@@ -196,13 +196,13 @@ def main(model_cfg: ModelConfig, run_cfg: RunConfig):
         if run_cfg.learn:
             if run_cfg.backend == "torch":
                 sp.learn(x_bool, active_cols_t)
+                tm.learn(active_cells_prev_global, active_cols_t, active_cells_t, active_segments_t, pred_cells_t)
             else:
                 sp.learn(dense_inp, active_cols)
-            tm.learn(active_cells_prev_global, active_cols, active_cells, active_segments, predictive_cells)
+                tm.learn(active_cells_prev_global, active_cols, active_cells, active_segments, predictive_cells)
 
         if run_cfg.backend == "torch":
-            tm_predict.mirror_from_tm(tm)
-            pred_next_t, _ = tm_predict.predict_from_set(active_cells)
+            pred_next_t, _, _ = tm.predict_from_set(active_cells)
             predicted_prev = set(pred_next_t.cpu().numpy().tolist())
         else:
             predicted_prev = tm.compute_predictive_cells(active_cells)
@@ -210,6 +210,12 @@ def main(model_cfg: ModelConfig, run_cfg: RunConfig):
 
         step += 1
         pos += 1
+
+    if run_cfg.backend == "torch":
+        tm.flush_pending()
+        elapsed = time.time() - t_start
+        steps_per_sec = run_cfg.steps / elapsed if elapsed > 0 else float('inf')
+        print(f"Timing: {steps_per_sec:.2f} steps/sec, nnz(P)={sp.perm_values.numel()}, nnz(M)={tm.perm_values.numel()}")
 
     saved = metrics.finalize()
     plots_dir = os.path.join(outdir, "plots"); os.makedirs(plots_dir, exist_ok=True)
