@@ -13,3 +13,4 @@ Outputs:
 - `runs/<timestamp>_starter/plots/` — PNGs (one figure per metric by default)
 
 Tune config in `config.py` / `run.py`. Change sparsity, permanence thresholds, or figure mode easily.
+Optional: `pip install torch` and set `RunConfig(backend="torch", device="cuda")` to run the Spatial Pooler on GPU.

@@ -70,7 +70,16 @@ def main(model_cfg: ModelConfig, run_cfg: RunConfig):
     with open(os.path.join(outdir, "config_run.json"), "w") as f:
         f.write(json_dumps(run_dict))
 
-    sp = SpatialPooler.create(model_cfg, rng)
+    if run_cfg.backend == "torch":
+        from torch_backend import make_sp_torch
+        import torch
+        sp = make_sp_torch(model_cfg, run_cfg.seed, run_cfg.device)
+        device = sp.device
+        print(f"Backend: torch (device={device})")
+    else:
+        sp = SpatialPooler.create(model_cfg, rng)
+        device = None
+        print("Backend: numpy")
     tm = TemporalMemory.create(model_cfg, rng)
 
     token_map = build_inputs(rng, run_cfg, model_cfg, tokens_unique)
@@ -120,25 +129,46 @@ def main(model_cfg: ModelConfig, run_cfg: RunConfig):
         idx = flip_bits(rng, idx, model_cfg.input_size, run_cfg.input_flip_bits)
         dense_inp = sdr_to_dense(idx, model_cfg.input_size)
 
-        overlaps = sp.compute_overlap(dense_inp)
-        sorted_overlaps = np.sort(overlaps)[::-1]
-        k = model_cfg.k_active_columns
-        kth_overlap = float(sorted_overlaps[k-1]) if k-1 < sorted_overlaps.size else 0.0
-        kplus1_overlap = float(sorted_overlaps[k]) if k < sorted_overlaps.size else 0.0
-        k_margin = kth_overlap - kplus1_overlap
-        active_cols = sp.k_wta(overlaps)
-        active_cols_set = set(active_cols.tolist())
-        sp_connected_mean = None
-        sp_near_thr_frac = None
-        if active_cols.size > 0:
-            perms = sp.proximal_perm[active_cols]
-            connected = perms >= model_cfg.perm_connected
-            sp_connected_mean = float(connected.sum(axis=1).mean())
-            near_thr = np.abs(perms - model_cfg.perm_connected) <= run_cfg.sp_near_threshold_eps
-            sp_near_thr_frac = float(near_thr.sum() / perms.size)
-
-        predictive_cells = tm.compute_predictive_cells(active_cells_prev_global)
-        active_cells, active_segments = tm.activate_cells(active_cols, predictive_cells)
+        if run_cfg.backend == "torch":
+            x_bool = torch.from_numpy(dense_inp).to(device).bool()
+            overlaps_t = sp.compute_overlap(x_bool)
+            sorted_overlaps_t = torch.sort(overlaps_t, descending=True)[0]
+            k = model_cfg.k_active_columns
+            kth_overlap = float(sorted_overlaps_t[k-1].item()) if k-1 < sorted_overlaps_t.numel() else 0.0
+            kplus1_overlap = float(sorted_overlaps_t[k].item()) if k < sorted_overlaps_t.numel() else 0.0
+            k_margin = kth_overlap - kplus1_overlap
+            active_cols_t = sp.k_wta(overlaps_t, model_cfg.k_active_columns)
+            active_cols = active_cols_t.cpu().numpy()
+            active_cols_set = set(active_cols.tolist())
+            sp_connected_mean = None
+            sp_near_thr_frac = None
+            if active_cols_t.numel() > 0:
+                perms = sp.proximal_perm[active_cols_t]
+                connected = perms >= model_cfg.perm_connected
+                sp_connected_mean = float(connected.sum(dim=1).float().mean().item())
+                near_thr = torch.abs(perms - model_cfg.perm_connected) <= run_cfg.sp_near_threshold_eps
+                sp_near_thr_frac = float(near_thr.float().sum().item() / perms.numel())
+            predictive_cells = tm.compute_predictive_cells(active_cells_prev_global)
+            active_cells, active_segments = tm.activate_cells(active_cols, predictive_cells)
+        else:
+            overlaps = sp.compute_overlap(dense_inp)
+            sorted_overlaps = np.sort(overlaps)[::-1]
+            k = model_cfg.k_active_columns
+            kth_overlap = float(sorted_overlaps[k-1]) if k-1 < sorted_overlaps.size else 0.0
+            kplus1_overlap = float(sorted_overlaps[k]) if k < sorted_overlaps.size else 0.0
+            k_margin = kth_overlap - kplus1_overlap
+            active_cols = sp.k_wta(overlaps)
+            active_cols_set = set(active_cols.tolist())
+            sp_connected_mean = None
+            sp_near_thr_frac = None
+            if active_cols.size > 0:
+                perms = sp.proximal_perm[active_cols]
+                connected = perms >= model_cfg.perm_connected
+                sp_connected_mean = float(connected.sum(axis=1).mean())
+                near_thr = np.abs(perms - model_cfg.perm_connected) <= run_cfg.sp_near_threshold_eps
+                sp_near_thr_frac = float(near_thr.sum() / perms.size)
+            predictive_cells = tm.compute_predictive_cells(active_cells_prev_global)
+            active_cells, active_segments = tm.activate_cells(active_cols, predictive_cells)
 
         metrics.seen_in_run[tok] += 1
         metrics.seen_global[tok] += 1
@@ -160,7 +190,10 @@ def main(model_cfg: ModelConfig, run_cfg: RunConfig):
         )
 
         if run_cfg.learn:
-            sp.learn(dense_inp, active_cols)
+            if run_cfg.backend == "torch":
+                sp.learn(x_bool, active_cols_t)
+            else:
+                sp.learn(dense_inp, active_cols)
             tm.learn(active_cells_prev_global, active_cols, active_cells, active_segments, predictive_cells)
 
         predicted_prev = tm.compute_predictive_cells(active_cells)

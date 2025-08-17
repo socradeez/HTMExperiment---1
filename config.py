@@ -50,6 +50,8 @@ class RunConfig:
     sp_near_threshold_eps: float = 0.01
     output_dir: str = "runs"
     run_name: Optional[str] = None
+    backend: str = "numpy"  # choices: "numpy", "torch"
+    device: str = "cuda"    # "cuda" or "cpu"
 
     # Input generation
     sdr_on_bits: int = 20   # ~2%
