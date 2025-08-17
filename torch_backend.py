@@ -1,9 +1,10 @@
 import warnings
 import numpy as np
 import torch
+from typing import Set, List
 
 from config import ModelConfig
-from htm_core import seeded_rng
+from htm_core import seeded_rng, TemporalMemory
 
 _ver = tuple(int(x) for x in torch.__version__.split(".")[:2])
 assert _ver >= (2, 0), "Torch >=2.0 required"
@@ -60,12 +61,81 @@ class TorchSP:
             torch.clamp_(self.perm_values[start:end], 0.0, 1.0)
 
 
-class TorchTM:
-    def __init__(self, *args, **kwargs):
-        raise NotImplementedError("TorchTM is not implemented yet")
+class TorchTMPredict:
+    def __init__(self, cfg: ModelConfig, device: str):
+        self.cfg = cfg
+        dev = torch.device(device)
+        if dev.type == "cuda" and not torch.cuda.is_available():
+            warnings.warn("CUDA not available, falling back to CPU")
+            dev = torch.device("cpu")
+        self.device = dev
+        self.num_cells = cfg.num_columns * cfg.cells_per_column
+        self.crow_indices = torch.tensor([0], dtype=torch.int64, device=self.device)
+        self.col_indices = torch.tensor([], dtype=torch.int64, device=self.device)
+        self.perm_values = torch.tensor([], dtype=torch.float32, device=self.device)
+        self.seg_owner_cell = torch.tensor([], dtype=torch.int64, device=self.device)
+
+    def mirror_from_tm(self, tm: TemporalMemory):
+        rows: List[int] = [0]
+        cols: List[int] = []
+        perms: List[float] = []
+        owners: List[int] = []
+        for cell_id, segs in tm.segments.items():
+            for seg in segs:
+                pres = seg.presyn_cells.astype(np.int64)
+                perm = seg.permanences.astype(np.float32)
+                cols.extend(pres.tolist())
+                perms.extend(perm.tolist())
+                owners.append(cell_id)
+                rows.append(rows[-1] + pres.size)
+        if not owners:
+            self.crow_indices = torch.tensor([0], dtype=torch.int64, device=self.device)
+            self.col_indices = torch.tensor([], dtype=torch.int64, device=self.device)
+            self.perm_values = torch.tensor([], dtype=torch.float32, device=self.device)
+            self.seg_owner_cell = torch.tensor([], dtype=torch.int64, device=self.device)
+            self.num_segments = 0
+            return
+        self.crow_indices = torch.tensor(rows, dtype=torch.int64, device=self.device)
+        self.col_indices = torch.tensor(cols, dtype=torch.int64, device=self.device)
+        self.perm_values = torch.tensor(perms, dtype=torch.float32, device=self.device)
+        self.seg_owner_cell = torch.tensor(owners, dtype=torch.int64, device=self.device)
+        self.num_segments = len(owners)
+
+    def predict_from_set(self, active_cells_prev: Set[int]):
+        if getattr(self, "num_segments", 0) == 0 or not active_cells_prev:
+            return (
+                torch.empty(0, dtype=torch.int64, device=self.device),
+                torch.empty(0, dtype=torch.int64, device=self.device),
+            )
+        a_prev = torch.zeros(self.num_cells, dtype=torch.float32, device=self.device)
+        idx = torch.tensor(list(active_cells_prev), dtype=torch.int64, device=self.device)
+        a_prev[idx] = 1.0
+        conn = (self.perm_values >= self.cfg.perm_connected).to(torch.float32)
+        M_conn = torch.sparse_csr_tensor(
+            self.crow_indices, self.col_indices, conn,
+            size=(self.num_segments, self.num_cells), device=self.device
+        )
+        s = torch.sparse.mv(M_conn, a_prev)
+        active_segments = torch.nonzero(
+            s >= self.cfg.segment_activation_threshold, as_tuple=False
+        ).squeeze(1)
+        if active_segments.numel() == 0:
+            return (
+                torch.empty(0, dtype=torch.int64, device=self.device),
+                torch.empty(0, dtype=torch.int64, device=self.device),
+            )
+        predictive_cells = torch.unique(self.seg_owner_cell[active_segments])
+        predictive_columns = predictive_cells // self.cfg.cells_per_column
+        return predictive_cells, predictive_columns
 
 
 def make_sp_torch(model_cfg: ModelConfig, seed: int, device: str) -> TorchSP:
     rng = seeded_rng(seed)
     return TorchSP(model_cfg, rng, device)
+
+
+def make_tm_predict_torch(model_cfg: ModelConfig, tm: TemporalMemory, device: str) -> TorchTMPredict:
+    obj = TorchTMPredict(model_cfg, device)
+    obj.mirror_from_tm(tm)
+    return obj
 

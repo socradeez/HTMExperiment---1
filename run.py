@@ -71,16 +71,19 @@ def main(model_cfg: ModelConfig, run_cfg: RunConfig):
         f.write(json_dumps(run_dict))
 
     if run_cfg.backend == "torch":
-        from torch_backend import make_sp_torch
+        from torch_backend import make_sp_torch, make_tm_predict_torch
         import torch
         sp = make_sp_torch(model_cfg, run_cfg.seed, run_cfg.device)
         device = sp.device
+        tm = TemporalMemory.create(model_cfg, rng)
+        tm_predict = make_tm_predict_torch(model_cfg, tm, run_cfg.device)
         print(f"Backend: torch (device={device})")
     else:
         sp = SpatialPooler.create(model_cfg, rng)
         device = None
+        tm = TemporalMemory.create(model_cfg, rng)
+        tm_predict = None
         print("Backend: numpy")
-    tm = TemporalMemory.create(model_cfg, rng)
 
     token_map = build_inputs(rng, run_cfg, model_cfg, tokens_unique)
     tokens = tokens_unique if tokens_unique is not None else run_cfg.sequence.split(run_cfg.sequence_delimiter)
@@ -148,7 +151,8 @@ def main(model_cfg: ModelConfig, run_cfg: RunConfig):
                 sp_connected_mean = float(connected.sum(dim=1).float().mean().item())
                 near_thr = torch.abs(perms - model_cfg.perm_connected) <= run_cfg.sp_near_threshold_eps
                 sp_near_thr_frac = float(near_thr.float().sum().item() / perms.numel())
-            predictive_cells = tm.compute_predictive_cells(active_cells_prev_global)
+            pred_cells_t, _ = tm_predict.predict_from_set(active_cells_prev_global)
+            predictive_cells = set(pred_cells_t.cpu().numpy().tolist())
             active_cells, active_segments = tm.activate_cells(active_cols, predictive_cells)
         else:
             overlaps = sp.compute_overlap(dense_inp)
@@ -196,7 +200,12 @@ def main(model_cfg: ModelConfig, run_cfg: RunConfig):
                 sp.learn(dense_inp, active_cols)
             tm.learn(active_cells_prev_global, active_cols, active_cells, active_segments, predictive_cells)
 
-        predicted_prev = tm.compute_predictive_cells(active_cells)
+        if run_cfg.backend == "torch":
+            tm_predict.mirror_from_tm(tm)
+            pred_next_t, _ = tm_predict.predict_from_set(active_cells)
+            predicted_prev = set(pred_next_t.cpu().numpy().tolist())
+        else:
+            predicted_prev = tm.compute_predictive_cells(active_cells)
         active_cells_prev_global = set(active_cells)
 
         step += 1
