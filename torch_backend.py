@@ -40,7 +40,7 @@ class TorchSP:
             self.crow_indices, self.col_indices, conn_values,
             size=(self.cfg.num_columns, self.cfg.input_size), device=self.device,
         )
-        overlaps = torch.sparse.mv(P_conn, x_dense_float)
+        overlaps = torch.sparse.mm(P_conn, x_dense_float.unsqueeze(1)).squeeze(1)
         return overlaps
 
     def k_wta(self, overlaps: torch.Tensor, k: int) -> torch.Tensor:
@@ -100,7 +100,7 @@ class TorchTM:
             self.crow_indices, self.col_indices, conn,
             size=(self.num_segments, self.num_cells), device=self.device,
         )
-        s = torch.sparse.mv(M_conn, a_prev)
+        s = torch.sparse.mm(M_conn, a_prev.unsqueeze(1)).squeeze(1)
         active_segments = torch.nonzero(
             s >= self.cfg.segment_activation_threshold, as_tuple=False
         ).squeeze(1)
