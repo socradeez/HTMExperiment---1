@@ -91,7 +91,9 @@ class BioTM:
         if self.num_segments > 0 and active_prev:
             a_prev_vec = set_to_bool_vec(active_prev, self.num_cells, self.device)
             active_mask = torch.zeros(self.num_segments, dtype=torch.bool, device=self.device)
-            active_mask[: seg_counts.shape[0]] = seg_counts > 0
+            active_mask[: seg_counts.shape[0]] = (
+                seg_counts >= self.cfg.segment_activation_threshold
+            )
             winner_counts = active_cells.view(self.cfg.num_columns, self.cfg.cells_per_column).sum(dim=1)
             for seg in torch.nonzero(active_mask, as_tuple=False).squeeze(1).tolist():
                 owner = int(self.seg_owner_cell[seg].item())

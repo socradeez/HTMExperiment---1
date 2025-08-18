@@ -111,6 +111,7 @@ class _CompatWriter:
             "fn": fn,
         }
         self._writer.writerow(row)
+        self._file.flush()
 
         # update state
         self.prev_predicted = pred_cells
