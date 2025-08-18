@@ -58,7 +58,7 @@ def main(model_cfg: BioModelConfig, run_cfg: BioRunConfig) -> str:
     )
     base_cfg.meta = model_cfg.meta
     sp = TorchSP(base_cfg, rng, model_cfg.device)
-    tm = BioTM(base_cfg, rng, model_cfg.device)
+    tm = BioTM(model_cfg, rng, model_cfg.device)
     predictor = SubthresholdPredictor()
     inhibition = ColumnInhibition(model_cfg.inhibition_strength, model_cfg.winners_per_column)
 

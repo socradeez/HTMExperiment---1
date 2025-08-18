@@ -17,8 +17,14 @@ class BioModelConfig:
     # Feed-forward & thresholds
     ff_threshold: float = 1.0
 
-    # Distal / predictive bias
+    # Distal synapses / bias
     segment_activation_threshold: int = 10
+    perm_connected: float = 0.25
+    perm_inc: float = 0.03
+    perm_dec: float = 0.015
+    distal_synapses_per_segment: int = 20
+    new_segment_init_perm_mean: float = 0.26
+    new_segment_init_perm_sd: float = 0.02
     bias_gain: float = 1.0
     bias_cap: float = 1.0
 
