@@ -1,16 +1,16 @@
-# BIO Variant Scaffold
+# BIO Variant
 
 ## What is this?
-A separate experimental path combining subthreshold prediction with within-column inhibition. This package is isolated from the main HTM stack.
+An experimental path combining subthreshold prediction with within-column inhibition. It reuses the Torch backend but lives in an isolated package so the baseline stack remains untouched.
 
 ## Status
-Scaffold only — no activation or learning logic yet.
+Basic activation and learning loop implemented. Distal bias lowers activation thresholds and a simple inhibitory competition selects winners. Metaplastic gating is available via existing parameters but disabled by default.
 
 ## Run
 ```bash
-python run_bio.py --dry-run
+python run_bio.py --steps 20
 ```
-This performs a dry run and writes configs/metrics to a fresh directory under `runs/bio/`.
+Run artifacts (configs and `metrics_bio.csv`) are written under `runs/bio/`.
 
 ## Next steps
-Implement distal bias, column inhibition, then hook learning and metaplastic gating.
+Refine bias/inhibition models and compare metrics against the baseline implementation.

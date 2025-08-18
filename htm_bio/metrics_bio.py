@@ -9,6 +9,7 @@ FIELDNAMES = [
     "distal_bias_winner_mean",
     "distal_bias_nonwinner_mean",
     "column_precision",
+    "column_recall",
     "predicted_columns",
     "notes",
 ]

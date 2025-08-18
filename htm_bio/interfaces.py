@@ -16,17 +16,10 @@ class PredictiveBiasComputer(Protocol):
 
 
 class InhibitionModel(Protocol):
-    def select_winners(self, ff_drive, distal_bias, cells_per_column, winners_per_column):
-        """Select active cells within each column.
-
-        Args:
-            ff_drive: feed-forward drive per cell.
-            distal_bias: bias per cell.
-            cells_per_column: number of cells per column.
-            winners_per_column: target winners per column.
-        Returns:
-            1D tensor or list of active cell indices.
-        """
+    def select_winners(
+        self, active_columns, distal_bias, cells_per_column, winners_per_column
+    ):
+        """Select active cells within ``active_columns`` using ``distal_bias``."""
         ...
 
 
