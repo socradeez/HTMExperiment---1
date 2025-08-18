@@ -102,6 +102,7 @@ def run_condition(L: int, S: int, O: int, schedule: str, occ: int, seed: int, ou
         token_pos_map=token_pos_map,
         schedule_name=schedule,
         run_name=run_name,
+        backend="torch"
     )
 
     original_builder = run_mod.build_inputs

@@ -340,6 +340,7 @@ if __name__ == "__main__":
         convergence_tau=0.9,
         convergence_M=3,
         input_flip_bits=0,
-        run_name="starter"
+        run_name="starter",
+        backend="torch"
     )
     main(model_cfg, run_cfg)
