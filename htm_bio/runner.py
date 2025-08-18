@@ -10,8 +10,8 @@ import numpy as np
 import torch
 
 from config import ModelConfig as BaseModelConfig
-from torch_backend import TorchSP
 from input_gen import build_token_sdrs
+from torch_backend import TorchSP
 
 from .config import BioModelConfig, BioRunConfig
 from .predictive_bias import SubthresholdPredictor
@@ -32,13 +32,11 @@ def _write_configs(model_cfg: BioModelConfig, run_cfg: BioRunConfig, run_dir: st
 
 
 def main(model_cfg: BioModelConfig, run_cfg: BioRunConfig) -> str:
-    """Execute a BIO run and return the output directory."""
     timestamp = time.strftime("%Y%m%d_%H%M%S")
     sched = run_cfg.schedule_name or "bio"
     run_dir = os.path.join(run_cfg.outdir, "bio", f"{timestamp}_{sched}")
     os.makedirs(run_dir, exist_ok=True)
     _write_configs(model_cfg, run_cfg, run_dir)
-
     metrics_path = metrics_bio.init_metrics(run_dir)
     if run_cfg.dry_run:
         metrics_bio.append_row(metrics_path, {"notes": "dry-run"})
@@ -53,76 +51,97 @@ def main(model_cfg: BioModelConfig, run_cfg: BioRunConfig) -> str:
         k_active_columns=model_cfg.k_active_columns,
         segment_activation_threshold=model_cfg.segment_activation_threshold,
     )
+    base_cfg.meta = model_cfg.meta
     sp = TorchSP(base_cfg, rng, model_cfg.device)
     tm = BioTM(base_cfg, rng, model_cfg.device)
-    predictor = SubthresholdPredictor(
-        model_cfg.bias_gain,
-        model_cfg.bias_cap,
-        model_cfg.segment_activation_threshold,
-    )
+    predictor = SubthresholdPredictor()
     inhibition = ColumnInhibition(model_cfg.inhibition_strength, model_cfg.winners_per_column)
 
     tokens = run_cfg.explicit_step_tokens or run_cfg.sequence.split(">")
     steps = run_cfg.steps or len(tokens)
     token_map = build_token_sdrs(tokens, model_cfg.input_size, on_bits=20, overlap_pct=0, rng=rng)
 
-    active_cells_prev: Set[int] = set()
-    predicted_prev = torch.empty(0, dtype=torch.int64, device=sp.device)
+    active_prev: Set[int] = set()
+    predicted_cols_prev: Set[int] = set()
+    predicted_cells_prev: Set[int] = set()
 
-    for step in range(steps):
-        tok = tokens[step % len(tokens)]
+    for t in range(steps):
+        tok = tokens[t % len(tokens)]
         bits = token_map[tok]
         x_bool = torch.zeros(model_cfg.input_size, dtype=torch.bool, device=sp.device)
         x_bool[bits] = True
         overlaps = sp.compute_overlap(x_bool)
         active_cols = sp.k_wta(overlaps, model_cfg.k_active_columns)
 
-        evidence, predicted_cells, active_segments = tm.compute_distal_evidence(active_cells_prev)
-        bias = predictor.compute_bias(evidence)
-        active_cells = inhibition.select_winners(
-            active_cols, bias, model_cfg.cells_per_column, model_cfg.winners_per_column
-        )
+        bias, seg_counts = predictor.compute_bias(tm, active_prev)
+        active_cells, bursting = tm.activate_cells(active_cols, bias, inhibition)
 
         sp.learn(x_bool, active_cols)
-        tm.learn(active_cells_prev, active_cols, active_cells, active_segments, predicted_prev)
+        tm.learn(active_prev, active_cells, bursting, seg_counts, model_cfg.meta)
 
-        winners_per_col = (
-            float(active_cells.numel()) / float(active_cols.numel())
-            if active_cols.numel() > 0
-            else 0.0
+        winner_counts = active_cells.view(model_cfg.num_columns, model_cfg.cells_per_column).sum(dim=1)
+        winners_per_col_mean = (
+            winner_counts[active_cols].float().mean().item() if active_cols.numel() > 0 else 0.0
         )
-        winner_mean = (
-            float(bias[active_cells].mean().item()) if active_cells.numel() > 0 else 0.0
-        )
-        nonwinner_biases = []
+        winner_cells = int(active_cells.sum().item())
+        winner_bias_mean = bias[active_cells].mean().item() if winner_cells > 0 else 0.0
+        nonwin_mask = torch.zeros_like(active_cells)
         for col in active_cols.tolist():
             start = col * model_cfg.cells_per_column
             end = start + model_cfg.cells_per_column
-            for c in range(start, end):
-                if c not in active_cells.tolist():
-                    nonwinner_biases.append(bias[c].item())
-        nonwinner_mean = float(np.mean(nonwinner_biases)) if nonwinner_biases else 0.0
-        pred_cols_prev = set((predicted_prev // model_cfg.cells_per_column).cpu().tolist())
-        actual_cols = set(active_cols.cpu().tolist())
-        precision = (
-            len(pred_cols_prev & actual_cols) / len(pred_cols_prev) if pred_cols_prev else 0.0
+            nonwin_mask[start:end] = True
+        nonwin_mask &= ~active_cells
+        nonwin_mean = bias[nonwin_mask].mean().item() if nonwin_mask.any() else 0.0
+
+        margins = seg_counts - model_cfg.segment_activation_threshold
+        predicted_cells = tm.seg_owner_cell[torch.nonzero(margins > 0, as_tuple=False).squeeze(1)]
+        predicted_cols = set((predicted_cells // model_cfg.cells_per_column).tolist())
+        col_precision = (
+            len(predicted_cols_prev & set(active_cols.tolist())) / len(predicted_cols_prev)
+            if predicted_cols_prev
+            else 0.0
         )
-        recall = (
-            len(pred_cols_prev & actual_cols) / len(actual_cols) if actual_cols else 0.0
+        col_recall = (
+            len(predicted_cols_prev & set(active_cols.tolist())) / active_cols.numel()
+            if active_cols.numel() > 0
+            else 0.0
         )
+        cell_precision = (
+            len(predicted_cells_prev & set(torch.nonzero(active_cells, as_tuple=False).squeeze(1).tolist()))
+            / len(predicted_cells_prev)
+            if predicted_cells_prev
+            else 0.0
+        )
+        cell_recall = (
+            len(predicted_cells_prev & set(torch.nonzero(active_cells, as_tuple=False).squeeze(1).tolist()))
+            / winner_cells
+            if winner_cells > 0
+            else 0.0
+        )
+
         metrics_bio.append_row(
             metrics_path,
             {
-                "within_column_winner_count": winners_per_col,
-                "distal_bias_winner_mean": winner_mean,
-                "distal_bias_nonwinner_mean": nonwinner_mean,
-                "column_precision": precision,
-                "column_recall": recall,
-                "predicted_columns": len(pred_cols_prev),
-                "notes": tok,
+                "t": t,
+                "input_id": tok,
+                "pos_in_seq": t,
+                "active_columns": int(active_cols.numel()),
+                "bursting_columns": int(bursting.numel()),
+                "winner_cells": winner_cells,
+                "winners_per_column_mean": winners_per_col_mean,
+                "distal_bias_winner_mean": winner_bias_mean,
+                "distal_bias_nonwinner_mean": nonwin_mean,
+                "predicted_columns": len(predicted_cols),
+                "column_precision": col_precision,
+                "column_recall": col_recall,
+                "cell_precision": cell_precision,
+                "cell_recall": cell_recall,
+                "notes": "bio_v1",
             },
         )
-        predicted_prev = predicted_cells
-        active_cells_prev = set(active_cells.cpu().tolist())
+
+        predicted_cols_prev = predicted_cols
+        predicted_cells_prev = set(predicted_cells.tolist())
+        active_prev = set(torch.nonzero(active_cells, as_tuple=False).squeeze(1).tolist())
 
     return run_dir

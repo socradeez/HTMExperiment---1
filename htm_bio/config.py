@@ -1,6 +1,9 @@
 from dataclasses import dataclass
 from typing import Optional, List, Dict
 
+from dataclasses import field
+from config import MetaParams
+
 
 @dataclass
 class BioModelConfig:
@@ -14,7 +17,7 @@ class BioModelConfig:
     # Feed-forward & thresholds
     ff_threshold: float = 1.0
 
-    # Distal / predictive bias (placeholders)
+    # Distal / predictive bias
     segment_activation_threshold: int = 10
     bias_gain: float = 1.0
     bias_cap: float = 1.0
@@ -22,6 +25,9 @@ class BioModelConfig:
     # Inhibition (within column)
     inhibition_strength: float = 1.0
     winners_per_column: int = 1
+
+    # Metaplasticity
+    meta: MetaParams = field(default_factory=MetaParams)
 
     # Torch device/runtime
     backend: str = "torch"

@@ -5,12 +5,20 @@ import os
 from typing import Dict, Any
 
 FIELDNAMES = [
-    "within_column_winner_count",
+    "t",
+    "input_id",
+    "pos_in_seq",
+    "active_columns",
+    "bursting_columns",
+    "winner_cells",
+    "winners_per_column_mean",
     "distal_bias_winner_mean",
     "distal_bias_nonwinner_mean",
+    "predicted_columns",
     "column_precision",
     "column_recall",
-    "predicted_columns",
+    "cell_precision",
+    "cell_recall",
     "notes",
 ]
 
