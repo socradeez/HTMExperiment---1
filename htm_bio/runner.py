@@ -64,8 +64,9 @@ def main(model_cfg: BioModelConfig, run_cfg: BioRunConfig) -> str:
 
     tokens = run_cfg.explicit_step_tokens or run_cfg.sequence.split(">")
     steps = run_cfg.steps or len(tokens)
+    unique_tokens = list(dict.fromkeys(tokens))
     token_map = build_token_sdrs(
-        tokens,
+        unique_tokens,
         model_cfg.input_size,
         on_bits=20,
         overlap_pct=run_cfg.overlap_pct,
