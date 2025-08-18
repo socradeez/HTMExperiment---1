@@ -23,6 +23,7 @@ def build_interleave_schedule(L: int, S: int, occurrences: int):
 
 
 def run_once(L: int, S: int, O: int, seed: int, args) -> dict:
+    print(f"L{L} S{S} O{O}: using cross-sequence reuse")
     tokens, token_pos_map = build_interleave_schedule(L, S, args.occurrences)
     model_cfg = BioModelConfig(device=args.device)
     run_cfg = BioRunConfig(

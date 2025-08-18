@@ -70,6 +70,7 @@ def main(model_cfg: BioModelConfig, run_cfg: BioRunConfig) -> str:
         on_bits=20,
         overlap_pct=run_cfg.overlap_pct,
         rng=rng,
+        cross_sequence_reuse=True,
     )
 
     active_prev: Set[int] = set()
