@@ -41,10 +41,12 @@ class BioRunConfig:
     explicit_step_tokens: Optional[List[str]] = None
     token_pos_map: Optional[Dict[str, int]] = None
     steps: Optional[int] = None
+    overlap_pct: int = 0
 
     outdir: str = "runs"
     seed: int = 7
     figure_mode: str = "single"
     schedule_name: Optional[str] = None
+    compat_metrics: bool = True
 
     dry_run: bool = True

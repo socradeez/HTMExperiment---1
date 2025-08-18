@@ -18,6 +18,7 @@ from .predictive_bias import SubthresholdPredictor
 from .inhibition import ColumnInhibition
 from .tm import BioTM
 from . import metrics_bio
+from . import compat_metrics
 
 
 def _write_configs(model_cfg: BioModelConfig, run_cfg: BioRunConfig, run_dir: str) -> None:
@@ -38,10 +39,14 @@ def main(model_cfg: BioModelConfig, run_cfg: BioRunConfig) -> str:
     os.makedirs(run_dir, exist_ok=True)
     _write_configs(model_cfg, run_cfg, run_dir)
     metrics_path = metrics_bio.init_metrics(run_dir)
+    compat_writer = None
     if run_cfg.dry_run:
         metrics_bio.append_row(metrics_path, {"notes": "dry-run"})
         print("[BIO] scaffold ready (dry-run). No activation/learning performed.")
         return run_dir
+    if run_cfg.compat_metrics:
+        num_cells = model_cfg.num_columns * model_cfg.cells_per_column
+        compat_writer = compat_metrics.open_writer(run_dir, num_cells, model_cfg.num_columns)
 
     rng = np.random.default_rng(run_cfg.seed)
     base_cfg = BaseModelConfig(
@@ -59,7 +64,13 @@ def main(model_cfg: BioModelConfig, run_cfg: BioRunConfig) -> str:
 
     tokens = run_cfg.explicit_step_tokens or run_cfg.sequence.split(">")
     steps = run_cfg.steps or len(tokens)
-    token_map = build_token_sdrs(tokens, model_cfg.input_size, on_bits=20, overlap_pct=0, rng=rng)
+    token_map = build_token_sdrs(
+        tokens,
+        model_cfg.input_size,
+        on_bits=20,
+        overlap_pct=run_cfg.overlap_pct,
+        rng=rng,
+    )
 
     active_prev: Set[int] = set()
     predicted_cols_prev: Set[int] = set()
@@ -140,8 +151,24 @@ def main(model_cfg: BioModelConfig, run_cfg: BioRunConfig) -> str:
             },
         )
 
+        if compat_writer is not None:
+            active_cell_ids = torch.nonzero(active_cells, as_tuple=False).squeeze(1).tolist()
+            compat_metrics.write_compat_row(
+                compat_writer,
+                t,
+                tok,
+                t,
+                active_cols.tolist(),
+                bursting.tolist(),
+                active_cell_ids,
+                predicted_cells.tolist(),
+                model_cfg.k_active_columns,
+            )
+
         predicted_cols_prev = predicted_cols
         predicted_cells_prev = set(predicted_cells.tolist())
         active_prev = set(torch.nonzero(active_cells, as_tuple=False).squeeze(1).tolist())
 
+    if compat_writer is not None:
+        compat_writer.close()
     return run_dir
