@@ -87,7 +87,19 @@ def main(model_cfg: BioModelConfig, run_cfg: BioRunConfig) -> str:
         active_cols = sp.k_wta(overlaps, model_cfg.k_active_columns)
 
         bias, seg_counts = predictor.compute_bias(tm, active_prev)
-        active_cells, bursting = tm.activate_cells(active_cols, bias, inhibition)
+        winners, bursting = inhibition.select_winners(
+            active_cols,
+            bias,
+            model_cfg.cells_per_column,
+            model_cfg.winners_per_column,
+        )
+        active_cells = torch.zeros(tm.num_cells, dtype=torch.bool, device=tm.device)
+        if winners.numel() > 0:
+            active_cells[winners] = True
+        for col in bursting.tolist():
+            start = col * model_cfg.cells_per_column
+            end = start + model_cfg.cells_per_column
+            active_cells[start:end] = True
 
         sp.learn(x_bool, active_cols)
         tm.learn(active_prev, active_cells, bursting, seg_counts, model_cfg.meta)
@@ -96,6 +108,7 @@ def main(model_cfg: BioModelConfig, run_cfg: BioRunConfig) -> str:
         winners_per_col_mean = (
             winner_counts[active_cols].float().mean().item() if active_cols.numel() > 0 else 0.0
         )
+        bias_eps = 1e-9
         winner_cells = int(active_cells.sum().item())
         winner_bias_mean = bias[active_cells].mean().item() if winner_cells > 0 else 0.0
         nonwin_mask = torch.zeros_like(active_cells)
@@ -105,10 +118,18 @@ def main(model_cfg: BioModelConfig, run_cfg: BioRunConfig) -> str:
             nonwin_mask[start:end] = True
         nonwin_mask &= ~active_cells
         nonwin_mean = bias[nonwin_mask].mean().item() if nonwin_mask.any() else 0.0
+        bias_matrix = bias.view(model_cfg.num_columns, model_cfg.cells_per_column)
+        columns_with_bias = int((bias_matrix[active_cols] > bias_eps).any(dim=1).sum().item())
+        nonzero_bias_cells = int((bias > bias_eps).sum().item())
 
         margins = seg_counts - model_cfg.segment_activation_threshold
         predicted_cells = tm.seg_owner_cell[torch.nonzero(margins > 0, as_tuple=False).squeeze(1)]
         predicted_cols = set((predicted_cells // model_cfg.cells_per_column).tolist())
+        predicted_not_winner = (
+            int((~active_cells[predicted_cells]).sum().item())
+            if predicted_cells.numel() > 0
+            else 0
+        )
         col_precision = (
             len(predicted_cols_prev & set(active_cols.tolist())) / len(predicted_cols_prev)
             if predicted_cols_prev
@@ -154,6 +175,9 @@ def main(model_cfg: BioModelConfig, run_cfg: BioRunConfig) -> str:
                 "winners_per_column_mean": winners_per_col_mean,
                 "distal_bias_winner_mean": winner_bias_mean,
                 "distal_bias_nonwinner_mean": nonwin_mean,
+                "columns_with_bias": columns_with_bias,
+                "nonzero_bias_cells": nonzero_bias_cells,
+                "predicted_not_winner": predicted_not_winner,
                 "predicted_columns": len(predicted_cols),
                 "column_precision": col_precision,
                 "column_recall": col_recall,

@@ -21,6 +21,9 @@ FIELDNAMES = [
     "cell_recall",
     "tp_segments",
     "fp_segments",
+    "columns_with_bias",
+    "nonzero_bias_cells",
+    "predicted_not_winner",
     "notes",
 ]
 
