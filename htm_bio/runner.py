@@ -132,9 +132,10 @@ def main(model_cfg: BioModelConfig, run_cfg: BioRunConfig) -> str:
             else 0.0
         )
 
-        active_seg = seg_counts >= model_cfg.segment_activation_threshold
-        if active_seg.numel() > 0:
-            owner_ids = tm.seg_owner_cell[active_seg]
+        active_mask = torch.zeros(tm.num_segments, dtype=torch.bool, device=tm.device)
+        active_mask[: seg_counts.shape[0]] = seg_counts >= model_cfg.segment_activation_threshold
+        if active_mask.any():
+            owner_ids = tm.seg_owner_cell[active_mask]
             owner_active = active_cells[owner_ids]
             tp_segments = int(owner_active.sum().item())
             fp_segments = int((~owner_active).sum().item())
