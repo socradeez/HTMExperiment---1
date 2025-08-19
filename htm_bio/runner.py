@@ -132,6 +132,15 @@ def main(model_cfg: BioModelConfig, run_cfg: BioRunConfig) -> str:
             else 0.0
         )
 
+        active_seg = seg_counts >= model_cfg.segment_activation_threshold
+        if active_seg.numel() > 0:
+            owner_ids = tm.seg_owner_cell[active_seg]
+            owner_active = active_cells[owner_ids]
+            tp_segments = int(owner_active.sum().item())
+            fp_segments = int((~owner_active).sum().item())
+        else:
+            tp_segments = fp_segments = 0
+
         metrics_bio.append_row(
             metrics_path,
             {
@@ -149,6 +158,8 @@ def main(model_cfg: BioModelConfig, run_cfg: BioRunConfig) -> str:
                 "column_recall": col_recall,
                 "cell_precision": cell_precision,
                 "cell_recall": cell_recall,
+                "tp_segments": tp_segments,
+                "fp_segments": fp_segments,
                 "notes": "bio_v1",
             },
         )

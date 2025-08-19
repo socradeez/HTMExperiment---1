@@ -22,6 +22,10 @@ class BioModelConfig:
     perm_connected: float = 0.25
     perm_inc: float = 0.03
     perm_dec: float = 0.015
+    # decrement applied to presynaptic synapses of false-positive segments
+    perm_dec_fp: float = 0.015
+    # prune synapses whose permanence falls below this (0 disables pruning)
+    prune_below: float = 0.0
     distal_synapses_per_segment: int = 20
     new_segment_init_perm_mean: float = 0.26
     new_segment_init_perm_sd: float = 0.02

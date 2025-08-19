@@ -19,6 +19,8 @@ FIELDNAMES = [
     "column_recall",
     "cell_precision",
     "cell_recall",
+    "tp_segments",
+    "fp_segments",
     "notes",
 ]
 

@@ -97,8 +97,6 @@ class BioTM:
             winner_counts = active_cells.view(self.cfg.num_columns, self.cfg.cells_per_column).sum(dim=1)
             for seg in torch.nonzero(active_mask, as_tuple=False).squeeze(1).tolist():
                 owner = int(self.seg_owner_cell[seg].item())
-                if not active_cells[owner]:
-                    continue
                 start = int(self.crow_indices[seg])
                 end = int(self.crow_indices[seg + 1])
                 cols = self.col_indices[start:end]
@@ -109,16 +107,41 @@ class BioTM:
                 margin = int(seg_counts[seg].item() - self.cfg.segment_activation_threshold)
                 col = owner // self.cfg.cells_per_column
                 entropy = int(winner_counts[col].item())
-                if meta.enabled:
-                    inc = np.full(is_prev.sum().item(), self.cfg.perm_inc, dtype=np.float32)
-                    inc = apply_gates(perms[is_prev].detach().cpu().numpy(), inc, margin, entropy, meta)
-                    dec = effective_dec(perms[~is_prev].detach().cpu().numpy(), self.cfg.perm_dec, meta)
-                    perms[is_prev] += torch.from_numpy(inc).to(self.device)
-                    perms[~is_prev] -= torch.from_numpy(dec).to(self.device)
+                owner_active = bool(active_cells[owner].item())
+                if owner_active:
+                    if meta.enabled:
+                        inc = np.full(is_prev.sum().item(), self.cfg.perm_inc, dtype=np.float32)
+                        inc = apply_gates(perms[is_prev].detach().cpu().numpy(), inc, margin, entropy, meta)
+                        dec = effective_dec(perms[~is_prev].detach().cpu().numpy(), self.cfg.perm_dec, meta)
+                        perms[is_prev] += torch.from_numpy(inc).to(self.device)
+                        perms[~is_prev] -= torch.from_numpy(dec).to(self.device)
+                    else:
+                        perms[is_prev] += self.cfg.perm_inc
+                        perms[~is_prev] -= self.cfg.perm_dec
                 else:
-                    perms[is_prev] += self.cfg.perm_inc
-                    perms[~is_prev] -= self.cfg.perm_dec
+                    if is_prev.any():
+                        if meta.enabled:
+                            dec = effective_dec(perms[is_prev].detach().cpu().numpy(), self.cfg.perm_dec_fp, meta)
+                            perms[is_prev] -= torch.from_numpy(dec).to(self.device)
+                        else:
+                            perms[is_prev] -= self.cfg.perm_dec_fp
                 torch.clamp_(perms, 0.0, 1.0)
+                if self.cfg.prune_below > 0.0:
+                    keep = perms >= self.cfg.prune_below
+                    if not torch.all(keep):
+                        self.col_indices = torch.cat([
+                            self.col_indices[:start],
+                            cols[keep],
+                            self.col_indices[end:],
+                        ])
+                        self.perm_values = torch.cat([
+                            self.perm_values[:start],
+                            perms[keep],
+                            self.perm_values[end:],
+                        ])
+                        removed = int((~keep).sum().item())
+                        if removed > 0:
+                            self.crow_indices[seg + 1 :] -= removed
         # bursting growth
         if bursting_columns.numel() > 0 and active_prev:
             a_prev_vec = set_to_bool_vec(active_prev, self.num_cells, self.device)
