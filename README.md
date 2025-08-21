@@ -1,4 +1,3 @@
-
 # HTM NumPy Starter (single layer)
 
 Quickstart:
@@ -14,3 +13,10 @@ Outputs:
 
 Tune config in `config.py` / `run.py`. Change sparsity or permanence thresholds easily.
 Optional: `pip install torch` and set `RunConfig(backend="torch", device="cuda")` to run the Spatial Pooler on GPU.
+
+Sweeps:
+```bash
+python htm_baseline_sweep.py --repetitions 100 --num_sequences 4,8,16 --seq_length 8 --overlap 0,25,50 --plots baseline_meta --seeds 2
+```
+Collects runs over combinations of sequence counts and overlaps, writing a
+`baseline_sweep_summary.csv` alongside the individual run directories.
