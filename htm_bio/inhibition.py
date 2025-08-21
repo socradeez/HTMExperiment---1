@@ -6,7 +6,12 @@ from .interfaces import InhibitionModel
 
 
 class ColumnInhibition(InhibitionModel):
-    """Deterministic top-k selection per column."""
+    """Deterministic top-k selection per column.
+
+    This class is invoked only for columns that were chosen by the
+    spatial pooler but did not receive a prediction. Predicted columns
+    bypass inhibition and directly activate their predicted cells.
+    """
 
     def __init__(self, inhibition_strength: float, winners_per_column: int = 1):
         self.inhibition_strength = inhibition_strength
