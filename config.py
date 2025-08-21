@@ -1,16 +1,6 @@
 
-from dataclasses import dataclass, asdict, field
+from dataclasses import dataclass
 from typing import Optional, List, Dict
-
-@dataclass
-class MetaParams:
-    enabled: bool = False
-    rungs: List[float] = field(default_factory=lambda: [0.30, 0.40, 0.50])
-    rung_min_margin: Dict[float, int] = field(default_factory=lambda: {0.30: 0, 0.40: 2, 0.50: 4})
-    rung_max_entropy: Dict[float, int] = field(default_factory=lambda: {0.30: 999, 0.40: 2, 0.50: 1})
-    decay_beta: float = 2.0
-    decay_floor: float = 0.10
-    eps: float = 1e-6
 
 @dataclass
 class ModelConfig:
@@ -35,17 +25,12 @@ class ModelConfig:
     segment_activation_threshold: int = 10
     new_segment_init_perm_mean: float = 0.26
     new_segment_init_perm_sd: float = 0.02
-    meta: MetaParams = field(default_factory=MetaParams)
 
 @dataclass
 class RunConfig:
     seed: int = 7
     steps: int = 400
     learn: bool = True
-    figure_mode: str = "single"  # "single" or "dashboard"
-    annotate_formulas: bool = True
-    per_input_plots_cells: bool = True
-    per_input_plots_columns: bool = True
     diagnostics_print: bool = True
     sp_near_threshold_eps: float = 0.01
     output_dir: str = "runs"

@@ -3,7 +3,6 @@ import numpy as np
 from dataclasses import dataclass
 from typing import Dict, List, Tuple, Set, Optional
 from config import ModelConfig
-from metaplasticity import effective_dec, apply_gates
 
 def seeded_rng(seed: int) -> np.random.Generator:
     return np.random.default_rng(seed)
@@ -93,7 +92,12 @@ class TemporalMemory:
                     break
         return predictive
 
-    def activate_cells(self, active_columns: np.ndarray, predictive_prev: Set[int]) -> Tuple[Set[int], Dict[int, List[Segment]]]:
+    def activate_cells(
+        self,
+        active_columns: np.ndarray,
+        predictive_prev: Set[int],
+        active_cells_prev: Set[int],
+    ) -> Tuple[Set[int], Dict[int, List[Segment]]]:
         active_cells: Set[int] = set()
         active_segments: Dict[int, List[Segment]] = {}
         for c in active_columns:
@@ -105,7 +109,7 @@ class TemporalMemory:
                     if cell in self.segments:
                         segs = []
                         for seg in self.segments[cell]:
-                            if seg.activation_count(active_cells_prev=active_cells_prev_global, thr=self.cfg.perm_connected) >= self.cfg.segment_activation_threshold:
+                            if seg.activation_count(active_cells_prev, self.cfg.perm_connected) >= self.cfg.segment_activation_threshold:
                                 segs.append(seg)
                         if segs:
                             active_segments[cell] = segs
@@ -167,26 +171,15 @@ class TemporalMemory:
 
         for cell_id, segs in active_segments.items():
             col = cell_id // self.cfg.cells_per_column
-            entropy = sum(1 for c in predictive_prev if c // self.cfg.cells_per_column == col)
             for seg in segs:
                 if seg.presyn_cells.size == 0:
                     continue
                 is_prev = np.isin(seg.presyn_cells, list(active_cells_prev))
-                seg_active = seg.activation_count(active_cells_prev, self.cfg.perm_connected)
-                margin = seg_active - self.cfg.segment_activation_threshold
-                if self.cfg.meta.enabled:
-                    inc = np.full(is_prev.sum(), self.cfg.perm_inc, dtype=np.float32)
-                    inc = apply_gates(seg.permanences[is_prev], inc, margin, entropy, self.cfg.meta)
-                    dec = effective_dec(seg.permanences[~is_prev], self.cfg.perm_dec, self.cfg.meta)
-                    seg.permanences[is_prev] += inc
-                    seg.permanences[~is_prev] -= dec
-                else:
-                    seg.permanences[is_prev] += self.cfg.perm_inc
-                    seg.permanences[~is_prev] -= self.cfg.perm_dec
+                seg.permanences[is_prev] += self.cfg.perm_inc
+                seg.permanences[~is_prev] -= self.cfg.perm_dec
                 np.clip(seg.permanences, 0.0, 1.0, out=seg.permanences)
 
         for col in bursting_cols:
             winner_cell = self._best_matching_cell(col, active_cells_prev)
             self._grow_new_segment(winner_cell, active_cells_prev)
 
-active_cells_prev_global: Set[int] = set()

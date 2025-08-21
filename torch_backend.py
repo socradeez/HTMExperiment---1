@@ -5,7 +5,6 @@ from typing import Set, List
 
 from config import ModelConfig
 from htm_core import seeded_rng
-from metaplasticity import apply_gates, effective_dec
 
 _ver = tuple(int(x) for x in torch.__version__.split(".")[:2])
 assert _ver >= (2, 0), "Torch >=2.0 required"
@@ -142,28 +141,14 @@ class TorchTM:
             a_prev = torch.zeros(self.num_cells, dtype=torch.bool, device=self.device)
             idx_prev = torch.tensor(list(active_cells_prev), dtype=torch.int64, device=self.device)
             a_prev[idx_prev] = True
-            pred_prev_cols = predictive_prev // self.cfg.cells_per_column
             for seg in active_segments.tolist():
                 start = int(self.crow_indices[seg])
                 end = int(self.crow_indices[seg + 1])
                 cols = self.col_indices[start:end]
                 perms = self.perm_values[start:end]
                 is_prev = a_prev[cols]
-                conn = perms >= self.cfg.perm_connected
-                seg_active = int((is_prev & conn).sum().item())
-                margin = seg_active - self.cfg.segment_activation_threshold
-                owner = int(self.seg_owner_cell[seg].item())
-                col = owner // self.cfg.cells_per_column
-                entropy = int((pred_prev_cols == col).sum().item())
-                if self.cfg.meta.enabled:
-                    inc = np.full(is_prev.sum().item(), self.cfg.perm_inc, dtype=np.float32)
-                    inc = apply_gates(perms[is_prev].detach().cpu().numpy(), inc, margin, entropy, self.cfg.meta)
-                    dec = effective_dec(perms[~is_prev].detach().cpu().numpy(), self.cfg.perm_dec, self.cfg.meta)
-                    perms[is_prev] += torch.from_numpy(inc).to(self.device)
-                    perms[~is_prev] -= torch.from_numpy(dec).to(self.device)
-                else:
-                    perms[is_prev] += self.cfg.perm_inc
-                    perms[~is_prev] -= self.cfg.perm_dec
+                perms[is_prev] += self.cfg.perm_inc
+                perms[~is_prev] -= self.cfg.perm_dec
                 torch.clamp_(perms, 0.0, 1.0)
 
         predicted_cols = set((predictive_prev // self.cfg.cells_per_column).tolist())
