@@ -56,6 +56,8 @@ class RunConfig:
     explicit_step_tokens: Optional[List[str]] = None
     token_pos_map: Optional[Dict[str, int]] = None
     schedule_name: Optional[str] = None
+    plots: Optional[List[str]] = None
+    overconfident_window: int = 2
 
 def json_dumps(d) -> str:
     import json

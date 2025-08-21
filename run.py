@@ -6,6 +6,7 @@ from datetime import datetime
 from itertools import combinations
 from dataclasses import asdict
 import time
+from collections import defaultdict
 
 from config import ModelConfig, RunConfig, json_dumps
 from metrics import MetricsCollector
@@ -99,6 +100,7 @@ def main(model_cfg: ModelConfig, run_cfg: RunConfig):
         stability_window=run_cfg.stability_window,
         convergence_tau=run_cfg.convergence_tau,
         convergence_M=run_cfg.convergence_M,
+        overconfident_window=run_cfg.overconfident_window,
     )
 
     predicted_prev: Set[int] = set()
@@ -107,6 +109,7 @@ def main(model_cfg: ModelConfig, run_cfg: RunConfig):
 
     t_start = time.time()
     active_cells_prev: Set[int] = set()
+    prev_dense_by_seq: Dict[str, np.ndarray] = {}
 
     while step < run_cfg.steps:
         if run_cfg.explicit_step_tokens is not None:
@@ -124,6 +127,14 @@ def main(model_cfg: ModelConfig, run_cfg: RunConfig):
         idx = token_map[tok]
         idx = flip_bits(rng, idx, model_cfg.input_size, run_cfg.input_flip_bits)
         dense_inp = sdr_to_dense(idx, model_cfg.input_size)
+        prev_dense = prev_dense_by_seq.get(seq_id)
+        if prev_dense is not None:
+            overlap = np.logical_and(prev_dense, dense_inp).sum()
+            union = np.logical_or(prev_dense, dense_inp).sum()
+            encoding_diff = 1 - (overlap / union) if union else 0.0
+        else:
+            encoding_diff = None
+        prev_dense_by_seq[seq_id] = dense_inp.copy()
 
         if run_cfg.backend == "torch":
             x_bool = torch.from_numpy(dense_inp).to(device).bool()
@@ -167,6 +178,36 @@ def main(model_cfg: ModelConfig, run_cfg: RunConfig):
             predictive_cells = tm.compute_predictive_cells(active_cells_prev)
             active_cells, active_segments = tm.activate_cells(active_cols, predictive_cells, active_cells_prev)
 
+        cpc = model_cfg.cells_per_column
+        tp_cells = predicted_prev & active_cells
+        hit_cols = {cell // cpc for cell in tp_cells}
+        burst_cols = active_cols_set - hit_cols
+        pred_col_sizes = defaultdict(int)
+        for cell in predicted_prev:
+            pred_col_sizes[cell // cpc] += 1
+        narrow_cells_prev = {cell for cell in predicted_prev if pred_col_sizes[cell // cpc] <= 2}
+        narrow_hit_cells = narrow_cells_prev & active_cells
+        overconfident_rate = 0.0
+        if narrow_cells_prev:
+            overconfident_rate = (
+                len(narrow_cells_prev - active_cells) / len(narrow_cells_prev)
+            )
+        surprise_mean = len(burst_cols) / len(active_cols_set) if active_cols_set else 0.0
+        prediction_accuracy = 1.0 - surprise_mean if active_cols_set else 0.0
+        spread_v1 = (
+            sum(pred_col_sizes.values()) / len(pred_col_sizes)
+            if pred_col_sizes
+            else 0.0
+        )
+        active_pred_cols = set(pred_col_sizes.keys()) & active_cols_set
+        spread_v2 = (
+            sum(pred_col_sizes[c] for c in active_pred_cols) / len(active_pred_cols)
+            if active_pred_cols
+            else 0.0
+        )
+        segments = sum(len(segs) for segs in tm.segments.values())
+        synapses = sum(seg.presyn_cells.size for segs in tm.segments.values() for seg in segs)
+
         metrics.seen_in_run[tok] += 1
         metrics.seen_global[tok] += 1
         metrics.log_step(
@@ -184,6 +225,20 @@ def main(model_cfg: ModelConfig, run_cfg: RunConfig):
             k_margin=k_margin,
             sp_connected_mean=sp_connected_mean,
             sp_near_thr_frac=sp_near_thr_frac,
+            surprise_mean=surprise_mean,
+            surprise_count=len(burst_cols),
+            spread_v1=spread_v1,
+            spread_v2=spread_v2,
+            overconfident_rate=overconfident_rate,
+            prediction_accuracy=prediction_accuracy,
+            segments=segments,
+            synapses=synapses,
+            encoding_diff=encoding_diff,
+            burst_cols=burst_cols,
+            predicted_col_sizes=pred_col_sizes,
+            covered_cols=hit_cols,
+            narrow_cells_prev=narrow_cells_prev,
+            narrow_hit_cells=narrow_hit_cells,
         )
 
         if run_cfg.learn:
@@ -211,6 +266,17 @@ def main(model_cfg: ModelConfig, run_cfg: RunConfig):
         print(f"Timing: {steps_per_sec:.2f} steps/sec, nnz(P)={sp.perm_values.numel()}, nnz(M)={tm.perm_values.numel()}")
 
     saved = metrics.finalize()
+
+    if run_cfg.plots:
+        from plotting import PLOTTERS
+        plot_dir = os.path.join(outdir, "plots")
+        os.makedirs(plot_dir, exist_ok=True)
+        for name in run_cfg.plots:
+            fn = PLOTTERS.get(name)
+            if fn:
+                fn(saved["csv"], plot_dir)
+            else:
+                print(f"Unknown plot bundle: {name}")
 
     if run_cfg.diagnostics_print:
         try:
@@ -278,6 +344,11 @@ def main(model_cfg: ModelConfig, run_cfg: RunConfig):
     return outdir
 
 if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--plots", nargs="*", default=None, help="Plot bundles to generate")
+    args = parser.parse_args()
+
     model_cfg = ModelConfig(
         input_size=1024,
         num_columns=2048,
@@ -307,6 +378,7 @@ if __name__ == "__main__":
         convergence_M=3,
         input_flip_bits=0,
         run_name="starter",
-        backend="torch"
+        backend="torch",
+        plots=args.plots,
     )
     main(model_cfg, run_cfg)
