@@ -82,14 +82,15 @@ class BioTM:
     # ------------------------------------------------------------------
     def learn(
         self,
-        active_prev: Set[int],
+        winners_prev: Set[int],
         active_cells: torch.Tensor,
         bursting_columns: torch.Tensor,
         seg_counts: torch.Tensor,
         meta: MetaParams,
-    ) -> None:
-        if self.num_segments > 0 and active_prev:
-            a_prev_vec = set_to_bool_vec(active_prev, self.num_cells, self.device)
+    ) -> tuple[float, float]:
+        total_syn = total_pre = total_cur = 0
+        if self.num_segments > 0 and winners_prev:
+            a_prev_vec = set_to_bool_vec(winners_prev, self.num_cells, self.device)
             active_mask = torch.zeros(self.num_segments, dtype=torch.bool, device=self.device)
             active_mask[: seg_counts.shape[0]] = (
                 seg_counts >= self.cfg.segment_activation_threshold
@@ -104,6 +105,9 @@ class BioTM:
                 if cols.numel() == 0:
                     continue
                 is_prev = a_prev_vec[cols]
+                total_syn += cols.numel()
+                total_pre += int(is_prev.sum().item())
+                total_cur += int(active_cells[cols].sum().item())
                 margin = int(seg_counts[seg].item() - self.cfg.segment_activation_threshold)
                 col = owner // self.cfg.cells_per_column
                 entropy = int(winner_counts[col].item())
@@ -143,14 +147,17 @@ class BioTM:
                         if removed > 0:
                             self.crow_indices[seg + 1 :] -= removed
         # bursting growth
-        if bursting_columns.numel() > 0 and active_prev:
-            a_prev_vec = set_to_bool_vec(active_prev, self.num_cells, self.device)
+        if bursting_columns.numel() > 0 and winners_prev:
+            a_prev_vec = set_to_bool_vec(winners_prev, self.num_cells, self.device)
             for col in bursting_columns.tolist():
                 winner = self._best_matching_cell(col, a_prev_vec)
-                self._grow_new_segment(winner, active_prev)
+                self._grow_new_segment(winner, winners_prev)
         self.steps_since_flush += 1
         if self.steps_since_flush >= self.flush_interval or len(self.pending_perm) > self.pending_threshold:
             self.flush_pending()
+        pre_ratio = total_pre / total_syn if total_syn > 0 else 0.0
+        cur_ratio = total_cur / total_syn if total_syn > 0 else 0.0
+        return pre_ratio, cur_ratio
 
     # ------------------------------------------------------------------
     def _best_matching_cell(self, col: int, a_prev_vec: torch.Tensor) -> int:

@@ -75,6 +75,7 @@ def main(model_cfg: BioModelConfig, run_cfg: BioRunConfig) -> str:
     )
 
     active_prev: Set[int] = set()
+    winner_prev: Set[int] = set()
     predicted_cols_prev: Set[int] = set()
     predicted_cells_prev: Set[int] = set()
 
@@ -153,12 +154,15 @@ def main(model_cfg: BioModelConfig, run_cfg: BioRunConfig) -> str:
             active_cells[start:end] = True
 
         sp.learn(x_bool, active_cols_sp)
-        tm.learn(active_prev, active_cells, bursting, seg_counts, model_cfg.meta)
+        pre_ratio, cur_ratio = tm.learn(winner_prev, active_cells, bursting, seg_counts, model_cfg.meta)
 
         active_cols = active_cols_union
         winner_counts = active_cells.view(model_cfg.num_columns, model_cfg.cells_per_column).sum(dim=1)
+        burst_set = set(bursting.tolist())
+        nonburst_cols = [c for c in union_set if c not in burst_set]
+        nonburst_tensor = torch.tensor(nonburst_cols, dtype=torch.int64, device=tm.device)
         winners_per_col_mean = (
-            winner_counts[active_cols].float().mean().item() if active_cols.numel() > 0 else 0.0
+            winner_counts[nonburst_tensor].float().mean().item() if nonburst_tensor.numel() > 0 else 0.0
         )
         bias_eps = 1e-9
         winner_cells = int(active_cells.sum().item())
@@ -240,6 +244,8 @@ def main(model_cfg: BioModelConfig, run_cfg: BioRunConfig) -> str:
                 "columns_with_bias": columns_with_bias,
                 "nonzero_bias_cells": nonzero_bias_cells,
                 "predicted_not_winner": predicted_not_winner,
+                "ltp_pre_ratio": pre_ratio,
+                "ltp_cur_ratio": cur_ratio,
                 "predicted_columns": cols_pred,
                 "column_precision": col_precision,
                 "column_recall": col_recall,
@@ -267,6 +273,7 @@ def main(model_cfg: BioModelConfig, run_cfg: BioRunConfig) -> str:
         predicted_cols_prev = pred_set
         predicted_cells_prev = set(predicted_cells.tolist())
         active_prev = set(active_cell_ids_list)
+        winner_prev = set(winners.tolist())
 
     if compat_writer is not None:
         compat_writer.close()

@@ -31,6 +31,8 @@ FIELDNAMES = [
     "columns_with_bias",
     "nonzero_bias_cells",
     "predicted_not_winner",
+    "ltp_pre_ratio",
+    "ltp_cur_ratio",
     "notes",
 ]
 
