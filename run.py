@@ -205,8 +205,8 @@ def main(model_cfg: ModelConfig, run_cfg: RunConfig):
             if active_pred_cols
             else 0.0
         )
-        segments = sum(len(segs) for segs in tm.segments.values())
-        synapses = sum(seg.presyn_cells.size for segs in tm.segments.values() for seg in segs)
+        segments = tm.num_segments + len(tm.pending_owner)
+        synapses = tm.perm_values.numel() + len(tm.pending_perm)
 
         metrics.seen_in_run[tok] += 1
         metrics.seen_global[tok] += 1
