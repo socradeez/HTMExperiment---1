@@ -19,4 +19,7 @@ Sweeps:
 python htm_baseline_sweep.py --repetitions 100 --num_sequences 4,8,16 --seq_length 8 --overlap 0,25,50 --plots baseline_meta --seeds 2
 ```
 Collects runs over combinations of sequence counts and overlaps, writing a
-`baseline_sweep_summary.csv` alongside the individual run directories.
+`baseline_sweep_summary.csv` alongside the individual run directories. When
+`--plots baseline_meta` is provided, a `plots/` folder is also created under the
+sweep output, showing each baseline plot with lines for every run layered
+together.

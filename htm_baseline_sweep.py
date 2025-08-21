@@ -8,6 +8,7 @@ import numpy as np
 from config import ModelConfig, RunConfig
 import run as run_mod
 from input_gen import make_sequence_tokens, build_token_sdrs_between_sequences
+from plotting import plot_baseline_meta_sweep
 
 
 def _parse_csv_ints(values: List[str]) -> List[int]:
@@ -130,6 +131,11 @@ def main(args):
             writer.writeheader()
             writer.writerows(rows)
         print("Sweep complete. Summary saved to", summary_path)
+        csv_paths = [os.path.join(r["run_dir"], "metrics.csv") for r in rows]
+        labels = [os.path.basename(r["run_dir"]) for r in rows]
+        plot_dir = os.path.join(args.out, "plots")
+        os.makedirs(plot_dir, exist_ok=True)
+        plot_baseline_meta_sweep(csv_paths, labels, plot_dir)
     else:
         print("No runs executed")
 
