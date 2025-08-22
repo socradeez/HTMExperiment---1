@@ -236,7 +236,8 @@ class MetricsCollector:
         if self.rows:
             with open(csv_path, "w", newline="") as f:
                 import csv
-                writer = csv.DictWriter(f, fieldnames=list(self.rows[0].keys()))
+                fieldnames = sorted({k for row in self.rows for k in row.keys()})
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
                 writer.writeheader()
                 writer.writerows(self.rows)
         npz_path = os.path.join(self.output_dir, "indices.npz")

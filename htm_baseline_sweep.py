@@ -127,7 +127,8 @@ def main(args):
     if rows:
         summary_path = os.path.join(args.out, "baseline_sweep_summary.csv")
         with open(summary_path, "w", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=rows[0].keys())
+            fieldnames = sorted({k for row in rows for k in row.keys()})
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
             writer.writerows(rows)
         print("Sweep complete. Summary saved to", summary_path)
