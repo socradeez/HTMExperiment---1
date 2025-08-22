@@ -109,7 +109,7 @@ def main(model_cfg: ModelConfig, run_cfg: RunConfig):
 
     t_start = time.time()
     active_cells_prev: Set[int] = set()
-    prev_dense_by_seq: Dict[str, np.ndarray] = {}
+    prev_dense_by_token: Dict[str, np.ndarray] = {}
 
     while step < run_cfg.steps:
         if run_cfg.explicit_step_tokens is not None:
@@ -127,14 +127,14 @@ def main(model_cfg: ModelConfig, run_cfg: RunConfig):
         idx = token_map[tok]
         idx = flip_bits(rng, idx, model_cfg.input_size, run_cfg.input_flip_bits)
         dense_inp = sdr_to_dense(idx, model_cfg.input_size)
-        prev_dense = prev_dense_by_seq.get(seq_id)
+        prev_dense = prev_dense_by_token.get(tok)
         if prev_dense is not None:
             overlap = np.logical_and(prev_dense, dense_inp).sum()
             union = np.logical_or(prev_dense, dense_inp).sum()
             encoding_diff = 1 - (overlap / union) if union else 0.0
         else:
-            encoding_diff = None
-        prev_dense_by_seq[seq_id] = dense_inp.copy()
+            encoding_diff = 0.0
+        prev_dense_by_token[tok] = dense_inp.copy()
 
         if run_cfg.backend == "torch":
             x_bool = torch.from_numpy(dense_inp).to(device).bool()

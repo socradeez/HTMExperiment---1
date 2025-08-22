@@ -113,7 +113,8 @@ class MetricsCollector:
         last_cells = self.stability.last_sdr.get(inp_id, set())
         last_cols = self.stability.last_cols.get(inp_id, set())
 
-        jac_last = self.jaccard(active_cells, last_cells) if last_cells else 0.0
+        jac_last = self.jaccard(active_cells, last_cells) if last_cells else 1.0
+        diff_last = 1.0 - jac_last
         overlap_last_cells = len(active_cells & last_cells) if last_cells else 0
         diff_last_cells = len(active_cells ^ last_cells)
         overlap_last_cols = len(active_columns & last_cols) if last_cols else 0
@@ -136,6 +137,7 @@ class MetricsCollector:
             "sequence_id": sequence_id,
             "pos_in_seq": pos_in_seq,
             "input_id": inp_id,
+            "cycle": input_seen_in_run,
             "seen_in_run": input_seen_in_run,
             "seen_global": input_seen_global,
             "active_cells": len(active_cells),
@@ -152,6 +154,7 @@ class MetricsCollector:
             "sparsity_columns": len(active_columns) / self.num_cols,
             "stability_overlap_last": overlap_last_cells,
             "stability_jaccard_last": jac_last,
+            "stability_diff_last": diff_last,
             "stability_jaccard_ema": jac_ema,
             "stability_best_window": best_hist,
             "stability_worst_window": worst_hist,

@@ -69,16 +69,16 @@ def plot_baseline_meta(csv_path: str, outdir: str):
         plt.savefig(os.path.join(outdir, "capacity.png"))
         plt.close()
 
-    if "encoding_diff" in df.columns and "sequence_id" in df.columns:
+    if "encoding_diff" in df.columns and "input_id" in df.columns and "cycle" in df.columns:
         plt.figure()
-        for seq_id, sub in df.dropna(subset=["encoding_diff"]).groupby("sequence_id"):
-            plt.plot(sub["step"], sub["encoding_diff"], label=seq_id)
-        plt.xlabel("step")
-        plt.ylabel("encoding diff to prev")
-        plt.title("Encoding similarity")
+        for inp_id, sub in df.dropna(subset=["encoding_diff"]).groupby("input_id"):
+            plt.plot(sub["cycle"], sub["encoding_diff"], label=inp_id)
+        plt.xlabel("cycle")
+        plt.ylabel("encoding diff to last")
+        plt.title("Encoding stability")
         plt.legend()
         plt.tight_layout()
-        plt.savefig(os.path.join(outdir, "encoding_similarity.png"))
+        plt.savefig(os.path.join(outdir, "encoding_stability.png"))
         plt.close()
 
 
@@ -171,18 +171,22 @@ def plot_baseline_meta_sweep(csv_paths, labels, outdir):
         plt.savefig(os.path.join(outdir, "capacity.png"))
         plt.close()
 
-    if any_col("encoding_diff") and any_col("sequence_id"):
+    if any_col("encoding_diff") and any_col("input_id") and any_col("cycle"):
         plt.figure()
         for df, label in zip(dfs, kept_labels):
-            if "encoding_diff" not in df.columns or "sequence_id" not in df.columns:
+            if (
+                "encoding_diff" not in df.columns
+                or "input_id" not in df.columns
+                or "cycle" not in df.columns
+            ):
                 continue
-            for seq_id, sub in df.dropna(subset=["encoding_diff"]).groupby("sequence_id"):
-                plt.plot(sub["step"], sub["encoding_diff"], label=f"{label}-{seq_id}")
-        plt.xlabel("step")
-        plt.ylabel("encoding diff to prev")
-        plt.title("Encoding similarity (all runs)")
+            for inp_id, sub in df.dropna(subset=["encoding_diff"]).groupby("input_id"):
+                plt.plot(sub["cycle"], sub["encoding_diff"], label=f"{label}-{inp_id}")
+        plt.xlabel("cycle")
+        plt.ylabel("encoding diff to last")
+        plt.title("Encoding stability (all runs)")
         plt.legend()
         plt.tight_layout()
-        plt.savefig(os.path.join(outdir, "encoding_similarity.png"))
+        plt.savefig(os.path.join(outdir, "encoding_stability.png"))
         plt.close()
 
