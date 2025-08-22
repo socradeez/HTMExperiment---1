@@ -10,7 +10,8 @@ Outputs:
 - `runs/<timestamp>_starter/metrics.csv` — per-step metrics
 - `runs/<timestamp>_starter/indices.npz` — sparse indices (active, predicted_prev, tp/fp/fn)
 - `runs/<timestamp>_starter/plots/` — baseline instrumentation charts, including
-  per-input encoding stability (cycle vs. Jaccard distance to last occurrence)
+  encoding stability per sequence step (cycle vs. Jaccard distance to the prior
+  occurrence of that input)
 
 Tune config in `config.py` / `run.py`. Change sparsity or permanence thresholds easily.
 Optional: `pip install torch` and set `RunConfig(backend="torch", device="cuda")` to run the Spatial Pooler on GPU.
