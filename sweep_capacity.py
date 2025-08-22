@@ -78,6 +78,8 @@ def run_condition(L: int, S: int, O: int, schedule: str, occ: int, seed: int, ou
         on_bits=run_cfg_template.sdr_on_bits,
         overlap_pct=O,
         rng=rng,
+        cross_sequence_reuse=False,
+        enforce_global_unique=True,
     )
     explicit, token_pos_map = build_schedule(S, L, occ, schedule)
     run_name = f"L{L}_S{S}_O{O}_{schedule}_seed{seed}"

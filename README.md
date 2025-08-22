@@ -14,3 +14,6 @@ Outputs:
 
 Tune config in `config.py` / `run.py`. Change sparsity, permanence thresholds, or figure mode easily.
 Optional: `pip install torch` and set `RunConfig(backend="torch", device="cuda")` to run the Spatial Pooler on GPU.
+
+## Experimental
+See [README_BIO.md](README_BIO.md) for the separate BIO variant (scaffold only).
