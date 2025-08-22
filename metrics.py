@@ -24,6 +24,8 @@ class MetricsCollector:
     convergence_tau: float = 0.9
     convergence_M: int = 3
 
+    overconfident_window: int = 2
+
     rows: List[Dict] = field(default_factory=list)
     stability: StabilityState = field(default_factory=StabilityState)
     sparse_indices: Dict[str, List[np.ndarray]] = field(default_factory=lambda: defaultdict(list))
@@ -32,6 +34,7 @@ class MetricsCollector:
     consecutive_hits: Dict[str, int] = field(default_factory=lambda: defaultdict(int))
     uniq_cells_ever: Set[int] = field(default_factory=set)
     uniq_cols_ever: Set[int] = field(default_factory=set)
+    narrow_miss_streak: Dict[int, int] = field(default_factory=lambda: defaultdict(int))
 
     def __post_init__(self):
         self.num_cols = self.num_cells // self.cells_per_column
@@ -70,14 +73,38 @@ class MetricsCollector:
                  kplus1_overlap: Optional[float] = None,
                  k_margin: Optional[float] = None,
                  sp_connected_mean: Optional[float] = None,
-                 sp_near_thr_frac: Optional[float] = None):
+                 sp_near_thr_frac: Optional[float] = None,
+                 surprise_mean: Optional[float] = None,
+                 surprise_count: Optional[int] = None,
+                 spread_v1: Optional[float] = None,
+                 spread_v2: Optional[float] = None,
+                 overconfident_rate: Optional[float] = None,
+                 prediction_accuracy: Optional[float] = None,
+                 segments: Optional[int] = None,
+                 synapses: Optional[int] = None,
+                 encoding_diff: Optional[float] = None,
+                 burst_cols: Optional[Set[int]] = None,
+                 predicted_col_sizes: Optional[Dict[int, int]] = None,
+                 covered_cols: Optional[Set[int]] = None,
+                 narrow_cells_prev: Optional[Set[int]] = None,
+                 narrow_hit_cells: Optional[Set[int]] = None):
         tp = active_cells & predicted_prev
         fp = predicted_prev - active_cells
         fn = active_cells - predicted_prev
 
-        # Bursting columns: active but with no predicted_prev cells in that column
-        predicted_cols_prev = {c // self.cells_per_column for c in predicted_prev}
-        bursting_cols = set(active_columns) - predicted_cols_prev
+        if burst_cols is None or covered_cols is None or predicted_col_sizes is None:
+            col_counts: Dict[int, int] = defaultdict(int)
+            for cell in predicted_prev:
+                col_counts[cell // self.cells_per_column] += 1
+            if predicted_col_sizes is None:
+                predicted_col_sizes = col_counts
+            hit_cols = {cell // self.cells_per_column for cell in tp}
+            if burst_cols is None:
+                burst_cols = set(active_columns) - hit_cols
+            if covered_cols is None:
+                covered_cols = hit_cols
+        if surprise_count is None and burst_cols is not None:
+            surprise_count = len(burst_cols)
 
         precision = len(tp) / (len(tp) + len(fp)) if (len(tp)+len(fp))>0 else 0.0
         recall    = len(tp) / (len(tp) + len(fn)) if (len(tp)+len(fn))>0 else 0.0
@@ -86,7 +113,8 @@ class MetricsCollector:
         last_cells = self.stability.last_sdr.get(inp_id, set())
         last_cols = self.stability.last_cols.get(inp_id, set())
 
-        jac_last = self.jaccard(active_cells, last_cells) if last_cells else 0.0
+        jac_last = self.jaccard(active_cells, last_cells) if last_cells else 1.0
+        diff_last = 1.0 - jac_last
         overlap_last_cells = len(active_cells & last_cells) if last_cells else 0
         diff_last_cells = len(active_cells ^ last_cells)
         overlap_last_cols = len(active_columns & last_cols) if last_cols else 0
@@ -109,6 +137,7 @@ class MetricsCollector:
             "sequence_id": sequence_id,
             "pos_in_seq": pos_in_seq,
             "input_id": inp_id,
+            "cycle": input_seen_in_run,
             "seen_in_run": input_seen_in_run,
             "seen_global": input_seen_global,
             "active_cells": len(active_cells),
@@ -120,11 +149,12 @@ class MetricsCollector:
             "recall": recall,
             "f1": f1,
             "active_columns": len(active_columns),
-            "bursting_columns": len(bursting_cols),
+            "bursting_columns": surprise_count if surprise_count is not None else 0,
             "sparsity_cells": len(active_cells) / self.num_cells,
             "sparsity_columns": len(active_columns) / self.num_cols,
             "stability_overlap_last": overlap_last_cells,
             "stability_jaccard_last": jac_last,
+            "stability_diff_last": diff_last,
             "stability_jaccard_ema": jac_ema,
             "stability_best_window": best_hist,
             "stability_worst_window": worst_hist,
@@ -141,6 +171,22 @@ class MetricsCollector:
             "sp_connected_mean": sp_connected_mean,
             "sp_near_thr_frac": sp_near_thr_frac,
         }
+        if surprise_mean is not None:
+            row["surprise_mean"] = surprise_mean
+        if spread_v1 is not None:
+            row["spread_v1"] = spread_v1
+        if spread_v2 is not None:
+            row["spread_v2"] = spread_v2
+        if overconfident_rate is not None:
+            row["overconfident_rate"] = overconfident_rate
+        if prediction_accuracy is not None:
+            row["prediction_accuracy"] = prediction_accuracy
+        if segments is not None:
+            row["segments"] = segments
+        if synapses is not None:
+            row["synapses"] = synapses
+        if encoding_diff is not None:
+            row["encoding_diff"] = encoding_diff
         self.rows.append(row)
 
         self.stability.last_sdr[inp_id] = set(active_cells)
@@ -158,6 +204,34 @@ class MetricsCollector:
         self.sparse_indices["tp"].append(np.fromiter(tp, dtype=np.int32))
         self.sparse_indices["fp"].append(np.fromiter(fp, dtype=np.int32))
         self.sparse_indices["fn"].append(np.fromiter(fn, dtype=np.int32))
+        if burst_cols is not None:
+            self.sparse_indices["burst_columns"].append(np.fromiter(burst_cols, dtype=np.int32))
+        if predicted_col_sizes is not None:
+            self.sparse_indices["predicted_cols_prev"].append(
+                np.fromiter(predicted_col_sizes.keys(), dtype=np.int32)
+            )
+            self.sparse_indices["predicted_cols_size"].append(
+                np.fromiter(predicted_col_sizes.values(), dtype=np.int32)
+            )
+        if covered_cols is not None:
+            self.sparse_indices["covered_columns"].append(np.fromiter(covered_cols, dtype=np.int32))
+        if narrow_cells_prev is not None:
+            self.sparse_indices["narrow_cells_prev"].append(
+                np.fromiter(narrow_cells_prev, dtype=np.int32)
+            )
+        if narrow_hit_cells is not None:
+            self.sparse_indices["narrow_hit_cells"].append(
+                np.fromiter(narrow_hit_cells, dtype=np.int32)
+            )
+        if narrow_cells_prev is not None:
+            for cell in narrow_cells_prev:
+                if narrow_hit_cells and cell in narrow_hit_cells:
+                    self.narrow_miss_streak[cell] = 0
+                else:
+                    self.narrow_miss_streak[cell] = min(
+                        self.overconfident_window,
+                        self.narrow_miss_streak.get(cell, 0) + 1,
+                    )
 
     def finalize(self):
         os.makedirs(self.output_dir, exist_ok=True)
@@ -165,7 +239,8 @@ class MetricsCollector:
         if self.rows:
             with open(csv_path, "w", newline="") as f:
                 import csv
-                writer = csv.DictWriter(f, fieldnames=list(self.rows[0].keys()))
+                fieldnames = sorted({k for row in self.rows for k in row.keys()})
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
                 writer.writeheader()
                 writer.writerows(self.rows)
         npz_path = os.path.join(self.output_dir, "indices.npz")

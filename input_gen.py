@@ -62,3 +62,34 @@ def build_token_sdrs(
             assert len(bits) == on_bits, f"{tok} SDR has {len(bits)} bits, expected {on_bits}"
             token_map[tok] = np.array(sorted(bits), dtype=np.int32)
     return token_map
+
+
+def build_token_sdrs_between_sequences(
+    tokens: List[str],
+    input_size: int,
+    on_bits: int,
+    overlap_pct: int,
+    rng: np.random.Generator,
+) -> Dict[str, np.ndarray]:
+    """Build SDRs with a shared core across all sequences.
+
+    ``overlap_pct`` controls the fraction of active bits that every token
+    shares with every other token. The remaining bits are sampled
+    independently per token from the unused pool.
+    """
+    shared_size = int(on_bits * overlap_pct / 100)
+    if shared_size > 0:
+        shared = rng.choice(input_size, size=shared_size, replace=False)
+    else:
+        shared = np.array([], dtype=np.int32)
+    unique_size = on_bits - shared_size
+    pool = np.setdiff1d(np.arange(input_size), shared)
+    token_map: Dict[str, np.ndarray] = {}
+    for tok in tokens:
+        if unique_size > 0:
+            uniq = rng.choice(pool, size=unique_size, replace=False)
+            bits = np.concatenate([shared, uniq])
+        else:
+            bits = shared.copy()
+        token_map[tok] = np.sort(bits).astype(np.int32)
+    return token_map
