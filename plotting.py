@@ -69,15 +69,14 @@ def plot_baseline_meta(csv_path: str, outdir: str):
         plt.savefig(os.path.join(outdir, "capacity.png"))
         plt.close()
 
-    if "encoding_diff" in df.columns and "pos_in_seq" in df.columns and "cycle" in df.columns:
+    if "encoding_diff" in df.columns and "input_id" in df.columns and "cycle" in df.columns:
         plt.figure()
         sub_df = df.dropna(subset=["encoding_diff"])
-        for pos, sub in sub_df.groupby("pos_in_seq"):
+        for tok, sub in sub_df.groupby("input_id"):
             agg = sub.groupby("cycle")["encoding_diff"].mean().reset_index()
-            label = str(sub["input_id"].iloc[0]) if "input_id" in sub.columns else f"pos{pos}"
-            plt.plot(agg["cycle"], agg["encoding_diff"], label=label)
+            plt.plot(agg["cycle"], 1.0 - agg["encoding_diff"], label=str(tok))
         plt.xlabel("cycle")
-        plt.ylabel("encoding diff to last")
+        plt.ylabel("encoding overlap with previous cycle")
         plt.title("Encoding stability")
         plt.legend()
         plt.tight_layout()
@@ -174,21 +173,21 @@ def plot_baseline_meta_sweep(csv_paths, labels, outdir):
         plt.savefig(os.path.join(outdir, "capacity.png"))
         plt.close()
 
-    if any_col("encoding_diff") and any_col("pos_in_seq") and any_col("cycle"):
+    if any_col("encoding_diff") and any_col("input_id") and any_col("cycle"):
         plt.figure()
         for df, label in zip(dfs, kept_labels):
             if (
                 "encoding_diff" not in df.columns
-                or "pos_in_seq" not in df.columns
+                or "input_id" not in df.columns
                 or "cycle" not in df.columns
             ):
                 continue
             sub_df = df.dropna(subset=["encoding_diff"])
-            for pos, sub in sub_df.groupby("pos_in_seq"):
+            for tok, sub in sub_df.groupby("input_id"):
                 agg = sub.groupby("cycle")["encoding_diff"].mean().reset_index()
-                plt.plot(agg["cycle"], agg["encoding_diff"], label=f"{label}-pos{pos}")
+                plt.plot(agg["cycle"], 1.0 - agg["encoding_diff"], label=f"{label}-{tok}")
         plt.xlabel("cycle")
-        plt.ylabel("encoding diff to last")
+        plt.ylabel("encoding overlap with previous cycle")
         plt.title("Encoding stability (all runs)")
         plt.legend()
         plt.tight_layout()
