@@ -104,26 +104,28 @@ def run_condition(num_sequences: int, seq_length: int, overlap: int, repetitions
 
 def main(args):
     num_sequences_list = _parse_csv_ints(args.num_sequences)
+    seq_length_list = _parse_csv_ints(args.seq_length)
     overlap_list = _parse_csv_ints(args.overlap)
     model_cfg = ModelConfig()
     run_cfg_template = RunConfig()
     os.makedirs(args.out, exist_ok=True)
     rows = []
-    for S in num_sequences_list:
-        for O in overlap_list:
-            for seed in range(args.seeds):
-                rows.append(run_condition(
-                    S,
-                    args.seq_length,
-                    O,
-                    args.repetitions,
-                    seed,
-                    args.plots,
-                    args.out,
-                    model_cfg,
-                    run_cfg_template,
-                    args.backend,
-                ))
+    for L in seq_length_list:
+        for S in num_sequences_list:
+            for O in overlap_list:
+                for seed in range(args.seeds):
+                    rows.append(run_condition(
+                        S,
+                        L,
+                        O,
+                        args.repetitions,
+                        seed,
+                        args.plots,
+                        args.out,
+                        model_cfg,
+                        run_cfg_template,
+                        args.backend,
+                    ))
     if rows:
         summary_path = os.path.join(args.out, "baseline_sweep_summary.csv")
         with open(summary_path, "w", newline="") as f:
@@ -145,7 +147,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--repetitions", type=int, default=1)
     parser.add_argument("--num_sequences", nargs="+", default=["1"])
-    parser.add_argument("--seq_length", type=int, default=4)
+    parser.add_argument("--seq_length", nargs="+", default=["4"])
     parser.add_argument("--overlap", nargs="+", default=["0"])
     parser.add_argument("--plots", nargs="*", default=None)
     parser.add_argument("--seeds", type=int, default=1)
