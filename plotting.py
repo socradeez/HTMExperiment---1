@@ -1,6 +1,61 @@
 import os
+from pathlib import Path
+
+import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+
+
+def plot_stability_global(df: pd.DataFrame, outpath: Path) -> None:
+    """Global stability: mean stability_jaccard_last per cycle.
+    Fallback: normalized stability_overlap_last per cycle."""
+    plt.figure(figsize=(7, 4))
+    if {"stability_jaccard_last", "cycle"}.issubset(df.columns):
+        g = df.groupby("cycle", as_index=False)["stability_jaccard_last"].mean()
+        plt.plot(g["cycle"], g["stability_jaccard_last"])
+        plt.ylabel("stability_jaccard_last (mean)")
+        plt.title("Encoding stability (global)")
+    elif {"stability_overlap_last", "cycle", "active_cells"}.issubset(df.columns):
+        tmp = df.copy()
+        tmp["norm_overlap"] = np.where(
+            tmp["active_cells"] > 0,
+            tmp["stability_overlap_last"] / tmp["active_cells"],
+            np.nan,
+        )
+        g = tmp.groupby("cycle", as_index=False)["norm_overlap"].mean()
+        plt.plot(g["cycle"], g["norm_overlap"])
+        plt.ylabel("normalized overlap")
+        plt.title("Encoding stability (global, overlap fallback)")
+    else:
+        raise ValueError(
+            "metrics must include stability_jaccard_last+cycle or "
+            "stability_overlap_last+active_cells+cycle for global plot"
+        )
+    plt.xlabel("cycle")
+    plt.tight_layout()
+    plt.savefig(outpath)
+    plt.close()
+
+
+def plot_stability_per_input(df: pd.DataFrame, outpath: Path) -> bool:
+    """Per-input stability: stability_jaccard_last mean per (input_id, cycle).
+    Returns True if plot was made; False if required columns are missing."""
+    req = {"stability_jaccard_last", "cycle", "input_id"}
+    if not req.issubset(df.columns):
+        return False
+
+    plt.figure(figsize=(8, 5))
+    for tok, grp in df.groupby("input_id"):
+        agg = grp.groupby("cycle", as_index=False)["stability_jaccard_last"].mean()
+        plt.plot(agg["cycle"], agg["stability_jaccard_last"], label=str(tok))
+    plt.title("Encoding stability (per input)")
+    plt.xlabel("cycle")
+    plt.ylabel("stability_jaccard_last")
+    plt.legend(ncol=2, fontsize=8, frameon=False)
+    plt.tight_layout()
+    plt.savefig(outpath)
+    plt.close()
+    return True
 
 
 def plot_baseline_meta(csv_path: str, outdir: str):
@@ -69,19 +124,8 @@ def plot_baseline_meta(csv_path: str, outdir: str):
         plt.savefig(os.path.join(outdir, "capacity.png"))
         plt.close()
 
-    if "encoding_diff" in df.columns and "input_id" in df.columns and "cycle" in df.columns:
-        plt.figure()
-        sub_df = df.dropna(subset=["encoding_diff"])
-        for tok, sub in sub_df.groupby("input_id"):
-            agg = sub.groupby("cycle")["encoding_diff"].mean().reset_index()
-            plt.plot(agg["cycle"], 1.0 - agg["encoding_diff"], label=str(tok))
-        plt.xlabel("cycle")
-        plt.ylabel("encoding overlap with previous cycle")
-        plt.title("Encoding stability")
-        plt.legend()
-        plt.tight_layout()
-        plt.savefig(os.path.join(outdir, "encoding_stability.png"))
-        plt.close()
+    plot_stability_global(df, Path(outdir) / "encoding_stability_global.png")
+    plot_stability_per_input(df, Path(outdir) / "encoding_stability_per_input.png")
 
 
 PLOTTERS = {"baseline_meta": plot_baseline_meta}
@@ -173,24 +217,42 @@ def plot_baseline_meta_sweep(csv_paths, labels, outdir):
         plt.savefig(os.path.join(outdir, "capacity.png"))
         plt.close()
 
-    if any_col("encoding_diff") and any_col("input_id") and any_col("cycle"):
+    if any_col("stability_jaccard_last") and any_col("cycle"):
         plt.figure()
         for df, label in zip(dfs, kept_labels):
-            if (
-                "encoding_diff" not in df.columns
-                or "input_id" not in df.columns
-                or "cycle" not in df.columns
-            ):
-                continue
-            sub_df = df.dropna(subset=["encoding_diff"])
-            for tok, sub in sub_df.groupby("input_id"):
-                agg = sub.groupby("cycle")["encoding_diff"].mean().reset_index()
-                plt.plot(agg["cycle"], 1.0 - agg["encoding_diff"], label=f"{label}-{tok}")
+            if {"stability_jaccard_last", "cycle"}.issubset(df.columns):
+                g = df.groupby("cycle", as_index=False)["stability_jaccard_last"].mean()
+                plt.plot(g["cycle"], g["stability_jaccard_last"], label=label)
+            elif {"stability_overlap_last", "active_cells", "cycle"}.issubset(df.columns):
+                tmp = df.copy()
+                tmp["norm_overlap"] = np.where(
+                    tmp["active_cells"] > 0,
+                    tmp["stability_overlap_last"] / tmp["active_cells"],
+                    np.nan,
+                )
+                g = tmp.groupby("cycle", as_index=False)["norm_overlap"].mean()
+                plt.plot(g["cycle"], g["norm_overlap"], label=label)
         plt.xlabel("cycle")
-        plt.ylabel("encoding overlap with previous cycle")
-        plt.title("Encoding stability (all runs)")
+        plt.ylabel("stability_jaccard_last (mean)")
+        plt.title("Encoding stability (global, all runs)")
         plt.legend()
         plt.tight_layout()
-        plt.savefig(os.path.join(outdir, "encoding_stability.png"))
+        plt.savefig(os.path.join(outdir, "encoding_stability_global.png"))
+        plt.close()
+
+    if any_col("stability_jaccard_last") and any_col("input_id") and any_col("cycle"):
+        plt.figure()
+        for df, label in zip(dfs, kept_labels):
+            if not {"stability_jaccard_last", "input_id", "cycle"}.issubset(df.columns):
+                continue
+            for tok, grp in df.groupby("input_id"):
+                agg = grp.groupby("cycle", as_index=False)["stability_jaccard_last"].mean()
+                plt.plot(agg["cycle"], agg["stability_jaccard_last"], label=f"{label}-{tok}")
+        plt.title("Encoding stability (per input, all runs)")
+        plt.xlabel("cycle")
+        plt.ylabel("stability_jaccard_last")
+        plt.legend(ncol=2, fontsize=8, frameon=False)
+        plt.tight_layout()
+        plt.savefig(os.path.join(outdir, "encoding_stability_per_input.png"))
         plt.close()
 
