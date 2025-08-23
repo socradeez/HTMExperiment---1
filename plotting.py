@@ -110,6 +110,20 @@ def plot_baseline_meta(csv_path: str, outdir: str):
         plt.savefig(os.path.join(outdir, "prediction_accuracy.png"))
         plt.close()
 
+    if "predicted_cells" in df.columns or "active_cells" in df.columns:
+        plt.figure()
+        if "predicted_cells" in df.columns:
+            plt.plot(idx, df["predicted_cells"], label="predicted")
+        if "active_cells" in df.columns:
+            plt.plot(idx, df["active_cells"], label="active")
+        plt.xlabel("step")
+        plt.ylabel("cells")
+        plt.title("Active vs. predicted cells")
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(os.path.join(outdir, "active_vs_predicted_cells.png"))
+        plt.close()
+
     if "segments" in df.columns or "synapses" in df.columns:
         plt.figure()
         if "segments" in df.columns:
@@ -200,6 +214,21 @@ def plot_baseline_meta_sweep(csv_paths, labels, outdir):
         plt.legend()
         plt.tight_layout()
         plt.savefig(os.path.join(outdir, "prediction_accuracy.png"))
+        plt.close()
+
+    if any_col("predicted_cells") or any_col("active_cells"):
+        plt.figure()
+        for df, idx, label in zip(dfs, idxs, kept_labels):
+            if "predicted_cells" in df.columns:
+                plt.plot(idx, df["predicted_cells"], label=f"{label}-pred")
+            if "active_cells" in df.columns:
+                plt.plot(idx, df["active_cells"], label=f"{label}-active")
+        plt.xlabel("step")
+        plt.ylabel("cells")
+        plt.title("Active vs. predicted cells (all runs)")
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(os.path.join(outdir, "active_vs_predicted_cells.png"))
         plt.close()
 
     if any_col("segments") or any_col("synapses"):
