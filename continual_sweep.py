@@ -1,6 +1,7 @@
 import argparse
 import os
 import csv
+from typing import Optional, List
 
 from config import ModelConfig, RunConfig
 import run as run_mod
@@ -29,8 +30,19 @@ def summarize_run(outdir: str) -> dict:
     return {"stability_seq": mean_seq, "stability_noise": mean_noise}
 
 
-def run_condition(V: int, N_total: int, gap_mean: int, K: int, L: int, noise_vocab: str,
-                  seed: int, out_root: str, model_cfg: ModelConfig, run_cfg_template: RunConfig):
+def run_condition(
+    V: int,
+    N_total: int,
+    gap_mean: int,
+    K: int,
+    L: int,
+    noise_vocab: str,
+    seed: int,
+    plots: Optional[List[str]],
+    out_root: str,
+    model_cfg: ModelConfig,
+    run_cfg_template: RunConfig,
+):
     sequences = [list(range(s * L, s * L + L)) for s in range(K)]
     stream = generate_noisy_stream(
         V=V,
@@ -63,6 +75,7 @@ def run_condition(V: int, N_total: int, gap_mean: int, K: int, L: int, noise_voc
         run_name=run_name,
         backend="torch",
         device=run_cfg_template.device,
+        plots=plots,
     )
     outdir = run_mod.main(model_cfg, run_cfg)
     summary = summarize_run(outdir)
@@ -85,6 +98,7 @@ if __name__ == "__main__":
     parser.add_argument("--seq_counts", default="1,2,4")
     parser.add_argument("--seq_lengths", default="4,8,16")
     parser.add_argument("--noise_types", default="in_dist")
+    parser.add_argument("--plots", nargs="*", default=None)
     parser.add_argument("--seeds", type=int, default=1)
     parser.add_argument("--out", default="runs/continual")
     args = parser.parse_args()
@@ -104,8 +118,21 @@ if __name__ == "__main__":
             for l in seq_lengths:
                 for nv in noise_types:
                     for seed in range(args.seeds):
-                        rows.append(run_condition(args.vocab, args.steps, g, k, l, nv,
-                                                  seed, args.out, model_cfg, run_cfg_template))
+                        rows.append(
+                            run_condition(
+                                args.vocab,
+                                args.steps,
+                                g,
+                                k,
+                                l,
+                                nv,
+                                seed,
+                                args.plots,
+                                args.out,
+                                model_cfg,
+                                run_cfg_template,
+                            )
+                        )
     if rows:
         summary_path = os.path.join(args.out, "continual_sweep_summary.csv")
         fieldnames = sorted({k for row in rows for k in row.keys()})

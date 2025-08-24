@@ -91,6 +91,7 @@ Flags:
 - `--seq_counts K1,K2,...` (default `1,2,4`): list of sequence counts.
 - `--seq_lengths L1,L2,...` (default `4,8,16`): list of sequence lengths.
 - `--noise_types TYPE1,TYPE2,...` (default `in_dist`): noise vocab types.
+- `--plots [PLOT ...]` (optional): plot bundles to generate for each run.
 - `--seeds INT` (default `1`): number of random seeds.
 - `--out PATH` (default `runs/continual`): output directory.
 
@@ -98,7 +99,8 @@ Example:
 
 ```bash
 python continual_sweep.py --vocab 50 --steps 500 --gap_means 6 --seq_counts 2 \
-  --seq_lengths 8 --noise_types in_dist,ood --seeds 3 --out runs/continual
+  --seq_lengths 8 --noise_types in_dist,ood --plots baseline_meta \
+  --seeds 3 --out runs/continual
 ```
 
 Each sweep script writes a summary CSV in its output directory alongside the
