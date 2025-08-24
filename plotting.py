@@ -1,9 +1,23 @@
 import os
 from pathlib import Path
+from typing import List
 
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+
+
+def _sequence_start_markers(df: pd.DataFrame, x_col: str | None) -> List[float]:
+    """Return x positions where sequences start.
+    Only marks if both noise and sequence steps exist."""
+    if {"is_noise_step", "seq_pos"}.issubset(df.columns):
+        if df["is_noise_step"].nunique() > 1:
+            mask = (df["is_noise_step"] == 0) & (df["seq_pos"] == 0)
+            if x_col is not None and x_col in df.columns:
+                return df.loc[mask, x_col].tolist()
+            else:
+                return df.index[mask].tolist()
+    return []
 
 
 def plot_stability_global(df: pd.DataFrame, outpath: Path) -> None:
@@ -31,6 +45,9 @@ def plot_stability_global(df: pd.DataFrame, outpath: Path) -> None:
             "metrics must include stability_jaccard_last+cycle or "
             "stability_overlap_last+active_cells+cycle for global plot"
         )
+    markers = _sequence_start_markers(df, "cycle")
+    for x in markers:
+        plt.axvline(x, color="gray", linestyle="--", alpha=0.3)
     plt.xlabel("cycle")
     plt.tight_layout()
     plt.savefig(outpath)
@@ -44,8 +61,14 @@ def plot_stability_per_input(df: pd.DataFrame, outpath: Path) -> bool:
     if not req.issubset(df.columns):
         return False
 
+    plot_df = df
+    if "is_noise_step" in plot_df.columns:
+        plot_df = plot_df[plot_df["is_noise_step"] == 0]
+    if plot_df.empty:
+        return False
+
     plt.figure(figsize=(8, 5))
-    for tok, grp in df.groupby("input_id"):
+    for tok, grp in plot_df.groupby("input_id"):
         agg = grp.groupby("cycle", as_index=False)["stability_jaccard_last"].mean()
         plt.plot(agg["cycle"], agg["stability_jaccard_last"], label=str(tok))
     plt.title("Encoding stability (per input)")
@@ -61,6 +84,7 @@ def plot_stability_per_input(df: pd.DataFrame, outpath: Path) -> bool:
 def plot_baseline_meta(csv_path: str, outdir: str):
     df = pd.read_csv(csv_path)
     idx = df["step"] if "step" in df.columns else range(len(df))
+    markers = _sequence_start_markers(df, "step" if "step" in df.columns else None)
 
     if "surprise_mean" in df.columns or "bursting_columns" in df.columns:
         plt.figure()
@@ -68,6 +92,8 @@ def plot_baseline_meta(csv_path: str, outdir: str):
             plt.plot(idx, df["surprise_mean"], label="mean")
         if "bursting_columns" in df.columns:
             plt.plot(idx, df["bursting_columns"], label="count")
+        for x in markers:
+            plt.axvline(x, color="gray", linestyle="--", alpha=0.3)
         plt.xlabel("step")
         plt.ylabel("surprise")
         plt.title("Surprise")
@@ -82,6 +108,8 @@ def plot_baseline_meta(csv_path: str, outdir: str):
             plt.plot(idx, df["spread_v1"], label="v1")
         if "spread_v2" in df.columns:
             plt.plot(idx, df["spread_v2"], label="v2")
+        for x in markers:
+            plt.axvline(x, color="gray", linestyle="--", alpha=0.3)
         plt.xlabel("step")
         plt.ylabel("spread")
         plt.title("Spread")
@@ -93,6 +121,8 @@ def plot_baseline_meta(csv_path: str, outdir: str):
     if "overconfident_rate" in df.columns:
         plt.figure()
         plt.plot(idx, df["overconfident_rate"])
+        for x in markers:
+            plt.axvline(x, color="gray", linestyle="--", alpha=0.3)
         plt.xlabel("step")
         plt.ylabel("overconfident rate")
         plt.title("Overconfident rate")
@@ -103,6 +133,8 @@ def plot_baseline_meta(csv_path: str, outdir: str):
     if "prediction_accuracy" in df.columns:
         plt.figure()
         plt.plot(idx, df["prediction_accuracy"])
+        for x in markers:
+            plt.axvline(x, color="gray", linestyle="--", alpha=0.3)
         plt.xlabel("step")
         plt.ylabel("prediction accuracy")
         plt.title("Prediction accuracy")
@@ -116,6 +148,8 @@ def plot_baseline_meta(csv_path: str, outdir: str):
             plt.plot(idx, df["predicted_cells"], label="predicted")
         if "active_cells" in df.columns:
             plt.plot(idx, df["active_cells"], label="active")
+        for x in markers:
+            plt.axvline(x, color="gray", linestyle="--", alpha=0.3)
         plt.xlabel("step")
         plt.ylabel("cells")
         plt.title("Active vs. predicted cells")
@@ -130,6 +164,8 @@ def plot_baseline_meta(csv_path: str, outdir: str):
             plt.plot(idx, df["segments"], label="segments")
         if "synapses" in df.columns:
             plt.plot(idx, df["synapses"], label="synapses")
+        for x in markers:
+            plt.axvline(x, color="gray", linestyle="--", alpha=0.3)
         plt.xlabel("step")
         plt.ylabel("count")
         plt.title("Capacity load")
