@@ -81,6 +81,31 @@ def plot_stability_per_input(df: pd.DataFrame, outpath: Path) -> bool:
     return True
 
 
+def plot_stability_per_position(df: pd.DataFrame, outpath: Path) -> bool:
+    """Stability grouped by sequence position (averaged across sequences).
+    Returns True if plot was made; False otherwise."""
+    req = {"stability_jaccard_last", "cycle", "seq_pos", "is_noise_step"}
+    if not req.issubset(df.columns):
+        return False
+
+    plot_df = df[(df["is_noise_step"] == 0) & (df["seq_pos"] >= 0)]
+    if plot_df.empty:
+        return False
+
+    plt.figure(figsize=(8, 5))
+    for pos, grp in plot_df.groupby("seq_pos"):
+        agg = grp.groupby("cycle", as_index=False)["stability_jaccard_last"].mean()
+        plt.plot(agg["cycle"], agg["stability_jaccard_last"], label=f"pos {int(pos)}")
+    plt.title("Encoding stability (per position)")
+    plt.xlabel("cycle")
+    plt.ylabel("stability_jaccard_last")
+    plt.legend(ncol=2, fontsize=8, frameon=False)
+    plt.tight_layout()
+    plt.savefig(outpath)
+    plt.close()
+    return True
+
+
 def plot_baseline_meta(csv_path: str, outdir: str):
     df = pd.read_csv(csv_path)
     idx = df["step"] if "step" in df.columns else range(len(df))
@@ -176,6 +201,7 @@ def plot_baseline_meta(csv_path: str, outdir: str):
 
     plot_stability_global(df, Path(outdir) / "encoding_stability_global.png")
     plot_stability_per_input(df, Path(outdir) / "encoding_stability_per_input.png")
+    plot_stability_per_position(df, Path(outdir) / "encoding_stability_per_position.png")
 
 
 PLOTTERS = {"baseline_meta": plot_baseline_meta}
