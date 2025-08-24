@@ -1,5 +1,5 @@
 import numpy as np
-from typing import List, Dict
+from typing import List, Dict, Optional, Tuple
 
 
 def make_sequence_tokens(S: int, L: int) -> List[str]:
@@ -62,6 +62,111 @@ def build_token_sdrs(
             assert len(bits) == on_bits, f"{tok} SDR has {len(bits)} bits, expected {on_bits}"
             token_map[tok] = np.array(sorted(bits), dtype=np.int32)
     return token_map
+
+
+def generate_noisy_stream(
+    V: int,
+    N_total: int,
+    sequences: List[List[int]],
+    gap_dist: Tuple[str, float],
+    noise_vocab: str = "in_dist",
+    p_intra: float = 0.0,
+    min_gap: int = 0,
+    occurrence_weights: Optional[List[float]] = None,
+    seed: Optional[int] = None,
+):
+    """Generate a token stream with random noise gaps between sequences.
+
+    Returns a dictionary with keys:
+        tokens, is_noise, seq_id, seq_pos, occurrence_id, phase
+    """
+    rng = np.random.default_rng(seed)
+
+    if gap_dist[0] == "geometric":
+        def draw_gap():
+            g = int(rng.geometric(gap_dist[1]))
+            return g
+    elif gap_dist[0] == "poisson":
+        def draw_gap():
+            return int(rng.poisson(gap_dist[1]))
+    else:
+        raise ValueError("gap_dist must be ('geometric', p) or ('poisson', lam)")
+
+    if occurrence_weights is not None:
+        weights = np.array(occurrence_weights, dtype=float)
+        weights = weights / weights.sum()
+    else:
+        weights = None
+
+    noise_low, noise_high = (0, V) if noise_vocab == "in_dist" else (V, 2 * V)
+
+    tokens: List[str] = []
+    is_noise: List[int] = []
+    seq_ids: List[int] = []
+    seq_pos: List[int] = []
+    occ_ids: List[int] = []
+    phases: List[float] = []
+
+    occ_counter = 0
+    while len(tokens) < N_total:
+        g = draw_gap()
+        while g < min_gap:
+            g = draw_gap()
+        for _ in range(g):
+            if len(tokens) >= N_total:
+                break
+            t = int(rng.integers(noise_low, noise_high))
+            tokens.append(str(t))
+            is_noise.append(1)
+            seq_ids.append(-1)
+            seq_pos.append(-1)
+            occ_ids.append(-1)
+            phases.append(-1.0)
+        if len(tokens) >= N_total:
+            break
+        s_idx = int(rng.choice(len(sequences), p=weights))
+        seq = sequences[s_idx]
+        occ_counter += 1
+        for pos, tok in enumerate(seq):
+            if p_intra > 0 and rng.random() < p_intra:
+                k = draw_gap()
+                for _ in range(k):
+                    if len(tokens) >= N_total:
+                        break
+                    t = int(rng.integers(noise_low, noise_high))
+                    tokens.append(str(t))
+                    is_noise.append(1)
+                    seq_ids.append(-1)
+                    seq_pos.append(-1)
+                    occ_ids.append(-1)
+                    phases.append(-1.0)
+            if len(tokens) >= N_total:
+                break
+            tokens.append(str(tok))
+            is_noise.append(0)
+            seq_ids.append(s_idx)
+            seq_pos.append(pos)
+            occ_ids.append(occ_counter)
+            phases.append((pos + 1) / len(seq))
+        if len(tokens) >= N_total:
+            break
+
+    # truncate to N_total
+    tokens = tokens[:N_total]
+    is_noise = is_noise[:N_total]
+    seq_ids = seq_ids[:N_total]
+    seq_pos = seq_pos[:N_total]
+    occ_ids = occ_ids[:N_total]
+    phases = phases[:N_total]
+
+    return {
+        "tokens": tokens,
+        "is_noise": is_noise,
+        "seq_id": seq_ids,
+        "seq_pos": seq_pos,
+        "occurrence_id": occ_ids,
+        "phase": phases,
+    }
 
 
 def build_token_sdrs_between_sequences(

@@ -55,6 +55,11 @@ class RunConfig:
     # Optional explicit scheduling
     explicit_step_tokens: Optional[List[str]] = None
     token_pos_map: Optional[Dict[str, int]] = None
+    step_is_noise: Optional[List[int]] = None
+    step_seq_id: Optional[List[int]] = None
+    step_seq_pos: Optional[List[int]] = None
+    step_occurrence_id: Optional[List[int]] = None
+    step_phase_in_sequence: Optional[List[float]] = None
     schedule_name: Optional[str] = None
     plots: Optional[List[str]] = None
     overconfident_window: int = 2

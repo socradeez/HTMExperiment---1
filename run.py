@@ -114,16 +114,43 @@ def main(model_cfg: ModelConfig, run_cfg: RunConfig):
     while step < run_cfg.steps:
         if run_cfg.explicit_step_tokens is not None:
             tok = run_cfg.explicit_step_tokens[step]
-            pos_in_seq = (
-                run_cfg.token_pos_map.get(tok, -1)
-                if run_cfg.token_pos_map
-                else (pos % len(tokens))
+            if run_cfg.step_seq_pos is not None:
+                pos_in_seq = run_cfg.step_seq_pos[step]
+            elif run_cfg.token_pos_map:
+                pos_in_seq = run_cfg.token_pos_map.get(tok, -1)
+            else:
+                pos_in_seq = -1
+            seq_id = (
+                run_cfg.step_seq_id[step]
+                if run_cfg.step_seq_id is not None
+                else tok.split("_")[0]
             )
-            seq_id = tok.split("_")[0]
+            is_noise_step = (
+                run_cfg.step_is_noise[step]
+                if run_cfg.step_is_noise is not None
+                else 0
+            )
+            occurrence_id = (
+                run_cfg.step_occurrence_id[step]
+                if run_cfg.step_occurrence_id is not None
+                else -1
+            )
+            phase_in_sequence = (
+                run_cfg.step_phase_in_sequence[step]
+                if run_cfg.step_phase_in_sequence is not None
+                else (
+                    pos_in_seq / len(tokens)
+                    if pos_in_seq >= 0 and tokens
+                    else -1.0
+                )
+            )
         else:
             tok = tokens[pos % len(tokens)]
             pos_in_seq = pos % len(tokens)
             seq_id = "seq0"
+            is_noise_step = 0
+            occurrence_id = -1
+            phase_in_sequence = pos_in_seq / len(tokens) if tokens else -1.0
         idx = token_map[tok]
         idx = flip_bits(rng, idx, model_cfg.input_size, run_cfg.input_flip_bits)
         dense_inp = sdr_to_dense(idx, model_cfg.input_size)
@@ -214,6 +241,9 @@ def main(model_cfg: ModelConfig, run_cfg: RunConfig):
             step=step,
             sequence_id=seq_id,
             pos_in_seq=pos_in_seq,
+            is_noise_step=is_noise_step,
+            occurrence_id=occurrence_id,
+            phase_in_sequence=phase_in_sequence,
             inp_id=tok,
             input_seen_in_run=metrics.seen_in_run[tok],
             input_seen_global=metrics.seen_global[tok],

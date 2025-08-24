@@ -63,12 +63,15 @@ class MetricsCollector:
                  step: int,
                  sequence_id: str,
                  pos_in_seq: int,
-                 inp_id: str,
-                 input_seen_in_run: int,
-                 input_seen_global: int,
-                 active_cells: Set[int],
-                 active_columns: Set[int],
-                 predicted_prev: Set[int],
+                 is_noise_step: int = 0,
+                 occurrence_id: Optional[int] = None,
+                 phase_in_sequence: Optional[float] = None,
+                 inp_id: str = '',
+                 input_seen_in_run: int = 0,
+                 input_seen_global: int = 0,
+                 active_cells: Set[int] = None,
+                 active_columns: Set[int] = None,
+                 predicted_prev: Set[int] = None,
                  kth_overlap: Optional[float] = None,
                  kplus1_overlap: Optional[float] = None,
                  k_margin: Optional[float] = None,
@@ -88,6 +91,12 @@ class MetricsCollector:
                  covered_cols: Optional[Set[int]] = None,
                  narrow_cells_prev: Optional[Set[int]] = None,
                  narrow_hit_cells: Optional[Set[int]] = None):
+        if active_cells is None:
+            active_cells = set()
+        if active_columns is None:
+            active_columns = set()
+        if predicted_prev is None:
+            predicted_prev = set()
         tp = active_cells & predicted_prev
         fp = predicted_prev - active_cells
         fn = active_cells - predicted_prev
@@ -136,6 +145,9 @@ class MetricsCollector:
             "step": step,
             "sequence_id": sequence_id,
             "pos_in_seq": pos_in_seq,
+            "is_noise_step": is_noise_step,
+            "occurrence_id": occurrence_id if occurrence_id is not None else -1,
+            "phase_in_sequence": phase_in_sequence if phase_in_sequence is not None else -1.0,
             "input_id": inp_id,
             "cycle": input_seen_in_run,
             "seen_in_run": input_seen_in_run,
