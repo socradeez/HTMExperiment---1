@@ -86,6 +86,7 @@ def run_condition(
         "noise_vocab": noise_vocab,
         "seed": seed,
         "run_dir": outdir,
+        "run_name": run_name,
     })
     return summary
 
@@ -141,5 +142,12 @@ if __name__ == "__main__":
             writer.writeheader()
             writer.writerows(rows)
         print("Sweep complete. Summary saved to", summary_path)
+        if args.plots and "baseline_meta" in args.plots:
+            from plotting import plot_baseline_meta_sweep
+            csv_paths = [os.path.join(r["run_dir"], "metrics.csv") for r in rows]
+            labels = [r.get("run_name", str(i)) for i, r in enumerate(rows)]
+            plot_dir = os.path.join(args.out, "plots")
+            os.makedirs(plot_dir, exist_ok=True)
+            plot_baseline_meta_sweep(csv_paths, labels, plot_dir)
     else:
         print("No runs executed")

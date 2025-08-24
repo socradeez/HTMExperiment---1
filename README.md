@@ -14,9 +14,9 @@ Outputs from `run.py` are written under `runs/<timestamp>_starter/`:
 
 - `metrics.csv` — per-step metrics
 - `indices.npz` — sparse indices (active, predicted_prev, tp/fp/fn)
-- `plots/` — baseline instrumentation charts, including encoding stability per
-  sequence step (cycle vs. Jaccard distance to the prior occurrence of that
-  input) and active vs. predicted neuron counts per timestep
+- `plots/` — baseline instrumentation charts such as global encoding stability,
+  per-input stability, per-position stability, and active vs. predicted neuron
+  counts per timestep
 
 Tune config in `config.py` / `run.py`. Change sparsity or permanence thresholds
 easily. Optional: `pip install torch` and set `RunConfig(backend="torch",

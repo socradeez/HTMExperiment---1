@@ -84,16 +84,21 @@ def plot_stability_per_input(df: pd.DataFrame, outpath: Path) -> bool:
 def plot_stability_per_position(df: pd.DataFrame, outpath: Path) -> bool:
     """Stability grouped by sequence position (averaged across sequences).
     Returns True if plot was made; False otherwise."""
-    req = {"stability_jaccard_last", "cycle", "seq_pos", "is_noise_step"}
-    if not req.issubset(df.columns):
+    req = {"stability_jaccard_last", "cycle", "is_noise_step"}
+    pos_col = None
+    if "pos_in_seq" in df.columns:
+        pos_col = "pos_in_seq"
+    elif "seq_pos" in df.columns:
+        pos_col = "seq_pos"
+    if pos_col is None or not req.issubset(df.columns):
         return False
 
-    plot_df = df[(df["is_noise_step"] == 0) & (df["seq_pos"] >= 0)]
+    plot_df = df[(df["is_noise_step"] == 0) & (df[pos_col] >= 0)]
     if plot_df.empty:
         return False
 
     plt.figure(figsize=(8, 5))
-    for pos, grp in plot_df.groupby("seq_pos"):
+    for pos, grp in plot_df.groupby(pos_col):
         agg = grp.groupby("cycle", as_index=False)["stability_jaccard_last"].mean()
         plt.plot(agg["cycle"], agg["stability_jaccard_last"], label=f"pos {int(pos)}")
     plt.title("Encoding stability (per position)")
@@ -336,7 +341,12 @@ def plot_baseline_meta_sweep(csv_paths, labels, outdir):
         for df, label in zip(dfs, kept_labels):
             if not {"stability_jaccard_last", "input_id", "cycle"}.issubset(df.columns):
                 continue
-            for tok, grp in df.groupby("input_id"):
+            plot_df = df
+            if "is_noise_step" in plot_df.columns:
+                plot_df = plot_df[plot_df["is_noise_step"] == 0]
+            if plot_df.empty:
+                continue
+            for tok, grp in plot_df.groupby("input_id"):
                 agg = grp.groupby("cycle", as_index=False)["stability_jaccard_last"].mean()
                 plt.plot(agg["cycle"], agg["stability_jaccard_last"], label=f"{label}-{tok}")
         plt.title("Encoding stability (per input, all runs)")
@@ -345,5 +355,29 @@ def plot_baseline_meta_sweep(csv_paths, labels, outdir):
         plt.legend(ncol=2, fontsize=8, frameon=False)
         plt.tight_layout()
         plt.savefig(os.path.join(outdir, "encoding_stability_per_input.png"))
+        plt.close()
+
+    if any_col("stability_jaccard_last") and any_col("cycle") and any_col("is_noise_step") and (any_col("pos_in_seq") or any_col("seq_pos")):
+        plt.figure()
+        for df, label in zip(dfs, kept_labels):
+            pos_col = None
+            if {"stability_jaccard_last", "cycle", "is_noise_step", "pos_in_seq"}.issubset(df.columns):
+                pos_col = "pos_in_seq"
+            elif {"stability_jaccard_last", "cycle", "is_noise_step", "seq_pos"}.issubset(df.columns):
+                pos_col = "seq_pos"
+            if pos_col is None:
+                continue
+            plot_df = df[(df["is_noise_step"] == 0) & (df[pos_col] >= 0)]
+            if plot_df.empty:
+                continue
+            for pos, grp in plot_df.groupby(pos_col):
+                agg = grp.groupby("cycle", as_index=False)["stability_jaccard_last"].mean()
+                plt.plot(agg["cycle"], agg["stability_jaccard_last"], label=f"{label}-pos {int(pos)}")
+        plt.title("Encoding stability (per position, all runs)")
+        plt.xlabel("cycle")
+        plt.ylabel("stability_jaccard_last")
+        plt.legend(ncol=2, fontsize=8, frameon=False)
+        plt.tight_layout()
+        plt.savefig(os.path.join(outdir, "encoding_stability_per_position.png"))
         plt.close()
 
