@@ -132,6 +132,28 @@ def plot_baseline_meta(csv_path: str, outdir: str):
         plt.savefig(os.path.join(outdir, "surprise.png"))
         plt.close()
 
+    # Surprise moving average (bursting columns / active columns)
+    surprise_series = None
+    if "surprise_mean" in df.columns:
+        surprise_series = df["surprise_mean"]
+    elif {"bursting_columns", "active_columns"}.issubset(df.columns):
+        active = df["active_columns"].replace(0, np.nan)
+        surprise_series = df["bursting_columns"] / active
+    if surprise_series is not None:
+        plt.figure()
+        for window in [5, 10, 25, 50]:
+            ma = surprise_series.rolling(window, min_periods=1).mean()
+            plt.plot(idx, ma, label=f"{window}-step")
+        for x in markers:
+            plt.axvline(x, color="gray", linestyle="--", alpha=0.3)
+        plt.xlabel("step")
+        plt.ylabel("surprise (burst/active)")
+        plt.title("Surprise moving average")
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(os.path.join(outdir, "surprise_moving_avg.png"))
+        plt.close()
+
     if "spread_v1" in df.columns or "spread_v2" in df.columns:
         plt.figure()
         if "spread_v1" in df.columns:
@@ -242,6 +264,27 @@ def plot_baseline_meta_sweep(csv_paths, labels, outdir):
         plt.legend()
         plt.tight_layout()
         plt.savefig(os.path.join(outdir, "surprise.png"))
+        plt.close()
+
+    if any_col("surprise_mean") or (any_col("bursting_columns") and any_col("active_columns")):
+        plt.figure()
+        for df, idx, label in zip(dfs, idxs, kept_labels):
+            if "surprise_mean" in df.columns:
+                surprise_series = df["surprise_mean"]
+            elif {"bursting_columns", "active_columns"}.issubset(df.columns):
+                active = df["active_columns"].replace(0, np.nan)
+                surprise_series = df["bursting_columns"] / active
+            else:
+                continue
+            for window in [5, 10, 25, 50]:
+                ma = surprise_series.rolling(window, min_periods=1).mean()
+                plt.plot(idx, ma, label=f"{label}-{window}")
+        plt.xlabel("step")
+        plt.ylabel("surprise (burst/active)")
+        plt.title("Surprise moving average (all runs)")
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(os.path.join(outdir, "surprise_moving_avg.png"))
         plt.close()
 
     if any_col("spread_v1") or any_col("spread_v2"):
